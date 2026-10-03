@@ -71,16 +71,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
 
-local CREDITS = "Ronaldoisthegoat2023/kokushibo"
+local CREDITS = "Ronaldoisthegoat2023/Kokushibo"
 
 ----------------------------------------------------------------------
 -- Usage logs (Discord) + remote blacklist
 ----------------------------------------------------------------------
 local WEBHOOK_URL = "https://discord.com/api/webhooks/1548050846531723379/pYq2rImDSm8oqFMNe59F0BzldW4l0NeWBoULmvQ9Be4_EdgYrHaLOLkx4aoQYGhWxhcP"
 
--- Optional: link to a plain text / JSON file you host (e.g. raw GitHub) that lists
--- Roblox user IDs or usernames you want blocked from using the script.
--- Leave "" to disable. Example file contents: 12345678, SomeUsername
 local REMOTE_BLACKLIST_URL = ""
 
 local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
@@ -133,8 +130,7 @@ local function isRemotelyBlacklisted()
 end
 
 ----------------------------------------------------------------------
--- Anti-tamper: if the protected values below are edited, the script wipes its
--- saved data, reports to Discord and shuts itself off.
+-- Anti-tamper
 ----------------------------------------------------------------------
 local EXPECTED_HASH = 2078926153
 
@@ -161,7 +157,7 @@ local function selfDestruct(reason)
             if string.find(string.lower(f), "kokuware_", 1, true) then pcall(delfile, f) end
         end
     end)
-    task.wait(1) -- give the webhook request time to send
+    task.wait(1)
 end
 
 if not integrityOK() then
@@ -174,12 +170,10 @@ if isRemotelyBlacklisted() then
     return
 end
 
--- NOTE: this reloads whatever script is hosted at this URL after a teleport.
--- Point it at wherever you host THIS updated file.
 if queue_on_teleport then
     queue_on_teleport([[
         if not _G.KokuwareUnloaded then
-            loadstring(game:HttpGet("https://raw.githubusercontent.com/ladomirkout-wq/tco-scripts/refs/heads/main/Echoware%20idk.lua"))()
+            loadstring(game:HttpGet("https://raw.githubusercontent.com/yournameoriginalshorts-tech/Kokuware.IoI/main/Kokuware.lol"))()
         end
     ]])
 end
@@ -195,7 +189,7 @@ noclipConnection = RunService.Stepped:Connect(function()
 end)
 
 ----------------------------------------------------------------------
--- UI helpers (black & white squircle style)
+-- UI helpers
 ----------------------------------------------------------------------
 local WHITE = Color3.fromRGB(255, 255, 255)
 local BLACK = Color3.fromRGB(0, 0, 0)
@@ -373,7 +367,7 @@ clearBtn.MouseButton1Click:Connect(function()
 end)
 
 ----------------------------------------------------------------------
--- Chat spy (logs other players' ; commands)
+-- Chat spy
 ----------------------------------------------------------------------
 local function SpyOnMessage(sender, text, displayInChat)
     if not sender or sender == LocalPlayer then return end
@@ -435,7 +429,6 @@ local function showTermsPrompt(callback)
     end)
 end
 
--- handler(text) -> ok:boolean, errMsg:string?
 local function showInputPrompt(name, subtitleText, buttonText, handler)
     local gui = newGui(name)
     local frame = makePanel(gui, UDim2.new(0, 280, 0, 210))
@@ -562,27 +555,49 @@ local function saveMessages()
     pcall(function() writefile(MSG_FILE, HttpService:JSONEncode(messageToggles)) end)
 end
 
--- Blacklist: blacklist[userId] = true
+----------------------------------------------------------------------
+-- FIXED Blacklist save/load
+----------------------------------------------------------------------
 local blacklist = {}
+
+local function saveBlacklist()
+    if BL_FILE == "" then return end
+    local list = {}
+    for id in pairs(blacklist) do
+        table.insert(list, tonumber(id))
+    end
+    local encodeOk, encoded = pcall(function()
+        return HttpService:JSONEncode(list)
+    end)
+    if encodeOk and encoded then
+        local writeOk, writeErr = pcall(writefile, BL_FILE, encoded)
+        if not writeOk then
+            addLogEntry("[Blacklist] Save failed: " .. tostring(writeErr), WHITE)
+        end
+    else
+        addLogEntry("[Blacklist] JSON encode failed", WHITE)
+    end
+end
 
 local function loadBlacklist()
     blacklist = {}
-    pcall(function()
-        local content = readfile(BL_FILE)
-        if content then
-            local list = HttpService:JSONDecode(content)
-            for _, id in ipairs(list) do
-                local n = tonumber(id)
-                if n then blacklist[n] = true end
-            end
-        end
+    if BL_FILE == "" then return end
+    local readOk, content = pcall(readfile, BL_FILE)
+    if not readOk or type(content) ~= "string" or content == "" then return end
+    local decodeOk, list = pcall(function()
+        return HttpService:JSONDecode(content)
     end)
-end
-
-local function saveBlacklist()
-    local list = {}
-    for id in pairs(blacklist) do table.insert(list, id) end
-    pcall(function() writefile(BL_FILE, HttpService:JSONEncode(list)) end)
+    if not decodeOk or type(list) ~= "table" then
+        addLogEntry("[Blacklist] Load failed: bad file contents", WHITE)
+        return
+    end
+    for _, id in ipairs(list) do
+        local n = tonumber(id)
+        if n then blacklist[n] = true end
+    end
+    local count = 0
+    for _ in pairs(blacklist) do count += 1 end
+    addLogEntry("[Blacklist] Loaded " .. count .. " entries", WHITE)
 end
 
 ----------------------------------------------------------------------
@@ -787,7 +802,9 @@ function main(allowedUsername, slotNumber)
         if messageToggles.loading then
             sendChat("Kokuware - Credits to " .. CREDITS)
             task.wait(0.6)
-            sendChat("Anti crash loaded credits to " .. CREDITS)
+            sendChat("Anti crash loaded | Credits to " .. CREDITS)
+            task.wait(0.6)
+            sendChat("Anti grief loaded | Credits to " .. CREDITS)
         end
     end)
 
@@ -854,7 +871,7 @@ function main(allowedUsername, slotNumber)
     end
 
     ------------------------------------------------------------------
-    -- Blacklist punishments (needs The Arkenstone)
+    -- Blacklist punishments
     ------------------------------------------------------------------
     local punished = {}
 
@@ -887,7 +904,6 @@ function main(allowedUsername, slotNumber)
         punished[plr.UserId] = nil
     end))
 
-    -- resolve a typed name / partial name / user id into (userId, name)
     local function resolveUser(text)
         local p = getTarget(text)
         if p then return p.UserId, p.Name end
@@ -1158,25 +1174,154 @@ function main(allowedUsername, slotNumber)
     end
 
     ------------------------------------------------------------------
-    -- Commands
+    -- Anti-grief detection
     ------------------------------------------------------------------
-    local allCommands = ".say .loopsay .stoploop .dall .adall .stopadall .silent .hide .stophide .reset .rejoin .antiafk .form .stopform .line .circle .orbit .lineup .star .stopmove .mod .removemod .alert .credits .cmds .bots .botscheck .mb .raidcalc .unload .shutdown .orbitspeed .raid .prefix .antilag .equip .animations .msgcmds .msgcheck .msg .wall .tower .dlh .follow .tp .blacklist .unblacklist .whitelist .paint .anticrash .sign"
+    local AG_SCAN_INTERVAL   = 0.05
+    local AG_GRIEF_TIME      = 0.85
+    local AG_MAX_GAP         = 0.30
+    local AG_DETECT_DISTANCE = 50
+    local AG_MIN_DELETIONS   = 2
+    local AG_WARN_COOLDOWN   = 30
+
+    local agTrackedParts  = {}
+    local agPlayerData    = {}
+    local agLastWarnings  = {}
+    local antiGriefEnabled = true
+
+    local function agIsDeleteTool(tool)
+        if not tool:IsA("Tool") then return false end
+        local n = tool.Name:lower():gsub("%s+", "")
+        return n == "dtool" or n == "deletetool"
+            or n:find("delete", 1, true) ~= nil
+            or n:find("dtool",  1, true) ~= nil
+    end
+
+    local function agHoldingDeleteTool(player)
+        local char = player.Character
+        if not char then return false end
+        for _, obj in ipairs(char:GetChildren()) do
+            if agIsDeleteTool(obj) then return true end
+        end
+        return false
+    end
+
+    local function agGetClosestDToolPlayer(position)
+        local closest, closestDist = nil, AG_DETECT_DISTANCE
+        for _, player in ipairs(Players:GetPlayers()) do
+            if agHoldingDeleteTool(player) then
+                local char = player.Character
+                local root = char and char:FindFirstChild("HumanoidRootPart")
+                if root then
+                    local dist = (root.Position - position).Magnitude
+                    if dist <= closestDist then
+                        closestDist = dist
+                        closest = player
+                    end
+                end
+            end
+        end
+        return closest
+    end
+
+    local function agRecordDeletion(player)
+        if not agPlayerData[player] then
+            agPlayerData[player] = {deletions = {}, streakStart = nil, lastDeletion = nil}
+        end
+        local data = agPlayerData[player]
+        local now  = os.clock()
+        table.insert(data.deletions, now)
+        if data.lastDeletion and (now - data.lastDeletion) > AG_MAX_GAP then
+            data.deletions  = {now}
+            data.streakStart = nil
+        end
+        data.lastDeletion = now
+        if not data.streakStart and #data.deletions >= AG_MIN_DELETIONS then
+            data.streakStart = now
+        end
+    end
+
+    local function agScanWorkspace()
+        local current = {}
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if obj:IsA("BasePart") then current[obj] = obj.Position end
+        end
+        for oldPart, oldPos in pairs(agTrackedParts) do
+            if not current[oldPart] then
+                local player = agGetClosestDToolPlayer(oldPos)
+                if player then agRecordDeletion(player) end
+            end
+        end
+        agTrackedParts = current
+    end
+
+    local function agCheckPlayers()
+        local now = os.clock()
+        for player, data in pairs(agPlayerData) do
+            if not player.Parent then
+                agPlayerData[player]   = nil
+                agLastWarnings[player] = nil
+                continue
+            end
+            if not data.lastDeletion then continue end
+            if (now - data.lastDeletion) > AG_MAX_GAP then
+                data.streakStart  = nil
+                data.deletions    = {}
+                data.lastDeletion = nil
+                continue
+            end
+            if data.streakStart then
+                local duration = now - data.streakStart
+                if duration >= AG_GRIEF_TIME then
+                    local lastWarn = agLastWarnings[player] or 0
+                    if now - lastWarn >= AG_WARN_COOLDOWN then
+                        agLastWarnings[player] = now
+                        sendChat(player.Name .. " HAS BEEN DETECTED GRIEFING🚨")
+                        addLogEntry("[AntiGrief] " .. player.Name .. " detected griefing", WHITE)
+                    end
+                    data.streakStart = nil
+                    data.deletions   = {}
+                end
+            end
+        end
+    end
+
+    -- Seed initial part snapshot
+    for _, obj in ipairs(workspace:GetDescendants()) do
+        if obj:IsA("BasePart") then agTrackedParts[obj] = obj.Position end
+    end
+
+    task.spawn(function()
+        while myGen == _G.KokuwareGen and not _G.KokuwareUnloaded do
+            if antiGriefEnabled then
+                agScanWorkspace()
+                agCheckPlayers()
+            end
+            task.wait(AG_SCAN_INTERVAL)
+        end
+    end)
+
+    table.insert(allConnections, Players.PlayerRemoving:Connect(function(player)
+        agPlayerData[player]   = nil
+        agLastWarnings[player] = nil
+    end))
 
     ------------------------------------------------------------------
-    -- Paint (client-side recolor of YOUR blocks)
+    -- Commands
     ------------------------------------------------------------------
+    local allCommands = ".say .loopsay .stoploop .dall .adall .stopadall .silent .hide .stophide .reset .rejoin .antiafk .form .stopform .line .circle .orbit .lineup .star .stopmove .mod .removemod .alert .credits .cmds .bots .botscheck .mb .raidcalc .unload .shutdown .orbitspeed .raid .prefix .antilag .equip .animations .msgcmds .msgcheck .msg .wall .tower .dlh .follow .tp .blacklist .unblacklist .whitelist .paint .anticrash .sign .antigrief"
+
     local PAINT_COLORS = {
-        Color3.fromRGB(255, 0, 0),     -- red
-        Color3.fromRGB(255, 140, 0),   -- orange
-        Color3.fromRGB(255, 235, 0),   -- yellow
-        Color3.fromRGB(0, 200, 60),    -- green
-        Color3.fromRGB(0, 120, 255),   -- blue
-        Color3.fromRGB(130, 0, 200),   -- purple
-        Color3.fromRGB(255, 105, 180), -- pink
-        Color3.fromRGB(101, 67, 33),   -- brown
-        Color3.fromRGB(148, 0, 211),   -- violet
-        Color3.fromRGB(0, 220, 220),   -- cyan
-        Color3.fromRGB(255, 0, 255),   -- magenta
+        Color3.fromRGB(255, 0, 0),
+        Color3.fromRGB(255, 140, 0),
+        Color3.fromRGB(255, 235, 0),
+        Color3.fromRGB(0, 200, 60),
+        Color3.fromRGB(0, 120, 255),
+        Color3.fromRGB(130, 0, 200),
+        Color3.fromRGB(255, 105, 180),
+        Color3.fromRGB(101, 67, 33),
+        Color3.fromRGB(148, 0, 211),
+        Color3.fromRGB(0, 220, 220),
+        Color3.fromRGB(255, 0, 255),
     }
 
     local function isMyBlock(part)
@@ -1215,9 +1360,6 @@ function main(allowedUsername, slotNumber)
         return count
     end
 
-    ------------------------------------------------------------------
-    -- Anti crash (removes spawned clones)
-    ------------------------------------------------------------------
     local antiCrashOn = true
 
     local function removeClone(obj)
@@ -1234,9 +1376,6 @@ function main(allowedUsername, slotNumber)
     end)
     table.insert(allConnections, workspace.DescendantAdded:Connect(removeClone))
 
-    ------------------------------------------------------------------
-    -- Sign (each bot says one letter's decal ID)
-    ------------------------------------------------------------------
     local function getSignIndex()
         local roster = {}
         for _, plr in ipairs(Players:GetPlayers()) do
@@ -1273,15 +1412,14 @@ function main(allowedUsername, slotNumber)
 
     local function processCommand(sender, message)
         if not sender or not message then return end
-        if blacklist[sender.UserId] then return end -- blacklisted users can't use the script
+        if blacklist[sender.UserId] then return end
 
         local clean = message:lower():gsub("^%s+", ""):gsub("%s+$", "")
-        if string.sub(clean, 1, 6) == "!sign " then clean = Prefix .. clean:sub(2) end -- !sign alias
+        if string.sub(clean, 1, 6) == "!sign " then clean = Prefix .. clean:sub(2) end
         if string.sub(clean, 1, #Prefix) ~= Prefix and string.sub(clean, 1, 1) ~= ";" then return end
         if string.sub(clean, 1, 1) == ";" then clean = Prefix .. clean:sub(2) end
         if not isAllowed(sender) then return end
 
-        -- de-dupe (chat events can fire through several hooks)
         local key = sender.UserId .. ":" .. message
         local now = os.clock()
         local last = _G.KokuwareLast
@@ -1524,7 +1662,8 @@ function main(allowedUsername, slotNumber)
         elseif name == "credits" then
             local creditLines = {
                 "Kokuware - Credits to " .. CREDITS,
-                "Enjoy using Kokuware!"
+                "Anti crash | Credits to " .. CREDITS,
+                "Anti grief | Credits to " .. CREDITS,
             }
             for _, line in ipairs(creditLines) do sendChat(line) task.wait(0.3) end
 
@@ -1628,6 +1767,17 @@ function main(allowedUsername, slotNumber)
 
         elseif name == "animations" then
             setAnimationOverride(not animOverrideActive)
+
+        elseif name == "antigrief" then
+            if lowerArgs == "off" then
+                antiGriefEnabled = false
+                sendChat("Anti-grief off")
+                addLogEntry("[AntiGrief] disabled", WHITE)
+            else
+                antiGriefEnabled = true
+                sendChat("Anti-grief on")
+                addLogEntry("[AntiGrief] enabled", WHITE)
+            end
         end
     end
 
@@ -1679,9 +1829,7 @@ end)
 
 local function performSetup()
     local activeUser = getActiveUsername()
-    if activeUser then
-        setUserFiles(activeUser)
-    else
+    if not activeUser then
         showUsernamePrompt(function(username)
             saveActiveUsername(username)
             setUserFiles(username)
@@ -1713,6 +1861,9 @@ local function performSetup()
     end
 end
 
+----------------------------------------------------------------------
+-- Periodic integrity + remote blacklist check (WITH self-destruct)
+----------------------------------------------------------------------
 task.spawn(function()
     while not _G.KokuwareUnloaded do
         task.wait(120)
