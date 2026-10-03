@@ -1,6 +1,7 @@
 _G.KokuwareUnloaded = false
 
-local encodedKey = {169, 199, 204, 211, 219, 197, 214, 201, 132, 218, 151}
+-- Key: "Kokuware-Lua" (each char code + 100)
+local encodedKey = {175, 211, 207, 217, 219, 197, 214, 201, 145, 176, 217, 197}
 local decodeOffset = 100
 
 local function getRealKey()
@@ -11,22 +12,48 @@ local function getRealKey()
     return key
 end
 
-local ACTIVE_USER_FILE = "kokuware_active.dat"
-local AGREEMENT_FILE = ""
-local LICENSE_FILE = ""
-local SLOT_FILE = ""
-local BOTS_FILE = ""
-local MSG_FILE = ""
+local PERM_OWNER = "ronaldoisthegoat2023"
 
-local currentUsername = ""
+-- Sign bots (letter order is by UserId, highest first). Accounts not listed here use their slot number.
+local BOT_NAMES = {
+    "HUBBABUBBABUNGUS2",
+    "Spikeymat",
+}
+
+local LETTER_DECALS = {
+    a = 84739223167918, b = 105539252069147, c = 74294038182490,
+    d = 114230329745973, e = 124352099641773, f = 82123842383991,
+    g = 139878994521171, h = 101579913315309, i = 124470047460474,
+    j = 118110165049919, k = 75749303727717, l = 85466628452197,
+    m = 100954977249922, n = 73074635266810, o = 105230115325841,
+    p = 112023158405904, q = 111141755063367, r = 84623184773686,
+    s = 140550431879504, t = 101463217182491, u = 125145470428911,
+    v = 89137330956226, w = 81799978413770, x = 126902038879519,
+    y = 97713026151289, z = 114913317499469,
+
+    ["?"] = 107521019153747,
+    ["!"] = 88856845587431,
+    ["&"] = 85348676666382,
+    ["\\"] = 112678560021456,
+    ["#"] = 89268294586836,
+    ["@"] = 73430094753110,
+    ["+"] = 131578044103911,
+    ["_"] = 90326334852953,
+    ["-"] = 88734632515555,
+    ["`"] = 130814762760085,
+    ["/"] = 122867449482229,
+}
+
+local ACTIVE_USER_FILE = "kokuware_active.dat"
+local AGREEMENT_FILE, LICENSE_FILE, SLOT_FILE, BOTS_FILE, MSG_FILE, BL_FILE = "", "", "", "", "", ""
 
 local function setUserFiles(username)
-    currentUsername = username
     LICENSE_FILE = "kokuware_license_" .. username .. ".dat"
     SLOT_FILE = "kokuware_slot_" .. username .. ".dat"
     AGREEMENT_FILE = "kokuware_agreed_" .. username .. ".dat"
     BOTS_FILE = "kokuware_bots_" .. username .. ".dat"
     MSG_FILE = "kokuware_msg_" .. username .. ".dat"
+    BL_FILE = "kokuware_blacklist_" .. username .. ".dat"
 end
 
 repeat task.wait() until game:IsLoaded()
@@ -42,9 +69,113 @@ local HttpService = game:GetService("HttpService")
 local TextChatService = game:GetService("TextChatService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local LocalPlayer = Players.LocalPlayer
-local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 
+local CREDITS = "Ronaldoisthegoat2023/kokushibo"
+
+----------------------------------------------------------------------
+-- Usage logs (Discord) + remote blacklist
+----------------------------------------------------------------------
+local WEBHOOK_URL = "https://discord.com/api/webhooks/1548050846531723379/pYq2rImDSm8oqFMNe59F0BzldW4l0NeWBoULmvQ9Be4_EdgYrHaLOLkx4aoQYGhWxhcP"
+
+-- Optional: link to a plain text / JSON file you host (e.g. raw GitHub) that lists
+-- Roblox user IDs or usernames you want blocked from using the script.
+-- Leave "" to disable. Example file contents: 12345678, SomeUsername
+local REMOTE_BLACKLIST_URL = ""
+
+local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+
+local function logToDiscord(title, fields, color)
+    if not httpRequest or WEBHOOK_URL == "" then return end
+    task.spawn(function()
+        pcall(function()
+            local placeName = "Unknown"
+            pcall(function() placeName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name end)
+            local execName = "Unknown"
+            pcall(function() execName = identifyexecutor() end)
+            local embedFields = {
+                {name = "Username", value = LocalPlayer.Name, inline = true},
+                {name = "Display Name", value = LocalPlayer.DisplayName, inline = true},
+                {name = "User ID", value = tostring(LocalPlayer.UserId), inline = true},
+                {name = "Game", value = tostring(placeName) .. " (" .. tostring(game.PlaceId) .. ")", inline = false},
+                {name = "Executor", value = tostring(execName), inline = true},
+            }
+            for _, f in ipairs(fields or {}) do table.insert(embedFields, f) end
+            httpRequest({
+                Url = WEBHOOK_URL,
+                Method = "POST",
+                Headers = {["Content-Type"] = "application/json"},
+                Body = HttpService:JSONEncode({
+                    username = "Kokuware Logs",
+                    embeds = {{
+                        title = title,
+                        color = color or 16777215,
+                        fields = embedFields,
+                        timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+                    }},
+                }),
+            })
+        end)
+    end)
+end
+
+local function isRemotelyBlacklisted()
+    if REMOTE_BLACKLIST_URL == "" then return false end
+    if string.lower(LocalPlayer.Name) == PERM_OWNER then return false end
+    local ok, body = pcall(function() return game:HttpGet(REMOTE_BLACKLIST_URL) end)
+    if not ok or type(body) ~= "string" then return false end
+    local id = tostring(LocalPlayer.UserId)
+    local name = string.lower(LocalPlayer.Name)
+    for token in body:gmatch("[%w_%.]+") do
+        if token == id or string.lower(token) == name then return true end
+    end
+    return false
+end
+
+----------------------------------------------------------------------
+-- Anti-tamper: if the protected values below are edited, the script wipes its
+-- saved data, reports to Discord and shuts itself off.
+----------------------------------------------------------------------
+local EXPECTED_HASH = 2078926153
+
+local function integrityHash(str)
+    local h = 5381
+    for i = 1, #str do
+        h = (h * 33 + string.byte(str, i)) % 4294967296
+    end
+    return h
+end
+
+local function integrityOK()
+    local blob = PERM_OWNER .. "|" .. CREDITS .. "|" .. getRealKey() .. "|" .. WEBHOOK_URL
+    return integrityHash(blob) == EXPECTED_HASH
+end
+
+local function selfDestruct(reason)
+    logToDiscord("TAMPER DETECTED - script self-destructed", {
+        {name = "Reason", value = tostring(reason), inline = false},
+    }, 15158332)
+    _G.KokuwareUnloaded = true
+    pcall(function()
+        for _, f in ipairs(listfiles("")) do
+            if string.find(string.lower(f), "kokuware_", 1, true) then pcall(delfile, f) end
+        end
+    end)
+    task.wait(1) -- give the webhook request time to send
+end
+
+if not integrityOK() then
+    selfDestruct("Script was modified (startup)")
+    return
+end
+
+if isRemotelyBlacklisted() then
+    logToDiscord("Blacklisted user tried to run the script", {}, 15158332)
+    return
+end
+
+-- NOTE: this reloads whatever script is hosted at this URL after a teleport.
+-- Point it at wherever you host THIS updated file.
 if queue_on_teleport then
     queue_on_teleport([[
         if not _G.KokuwareUnloaded then
@@ -53,130 +184,186 @@ if queue_on_teleport then
     ]])
 end
 
-local localPlayer = game:GetService("Players").LocalPlayer
-local runService = game:GetService("RunService")
 local noclipConnection = nil
-local function startNoclip()
-    noclipConnection = runService.Stepped:Connect(function()
-        local character = localPlayer.Character
-        if character then
-            for _, child in ipairs(character:GetDescendants()) do
-                if child:IsA("BasePart") and child.CanCollide then child.CanCollide = false end
-            end
+noclipConnection = RunService.Stepped:Connect(function()
+    local character = LocalPlayer.Character
+    if character then
+        for _, child in ipairs(character:GetDescendants()) do
+            if child:IsA("BasePart") and child.CanCollide then child.CanCollide = false end
         end
-    end)
+    end
+end)
+
+----------------------------------------------------------------------
+-- UI helpers (black & white squircle style)
+----------------------------------------------------------------------
+local WHITE = Color3.fromRGB(255, 255, 255)
+local BLACK = Color3.fromRGB(0, 0, 0)
+local GRAY = Color3.fromRGB(170, 170, 170)
+
+local function newGui(name)
+    local gui = Instance.new("ScreenGui")
+    gui.Name = name
+    gui.Parent = guiParent
+    gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
+    gui.ResetOnSpawn = false
+    return gui
 end
-startNoclip()
 
-local logGui = Instance.new("ScreenGui")
-logGui.Name = "KokuLog"
-logGui.Parent = guiParent
-logGui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-logGui.ResetOnSpawn = false
-logGui.Enabled = true
+local function squircle(obj, radius)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, radius or 14)
+    c.Parent = obj
+end
 
-local logMain = Instance.new("Frame", logGui)
-logMain.AnchorPoint = Vector2.new(1,0.5)
-logMain.Position = UDim2.new(1,-10,0.5,0)
-logMain.Size = UDim2.new(0,300,0,400)
-logMain.BackgroundColor3 = Color3.fromRGB(20,20,20)
-logMain.BorderSizePixel = 0
-logMain.BackgroundTransparency = 0.15
-Instance.new("UICorner", logMain).CornerRadius = UDim.new(0,10)
+local function outline(obj, thickness)
+    local s = Instance.new("UIStroke")
+    s.Color = WHITE
+    s.Thickness = thickness or 1.5
+    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+    s.Parent = obj
+end
 
-local logTitle = Instance.new("TextLabel", logMain)
-logTitle.Size = UDim2.new(1,0,0,30)
-logTitle.Position = UDim2.new(0,0,0,5)
-logTitle.BackgroundTransparency = 1
-logTitle.Font = Enum.Font.GothamBold
-logTitle.Text = "Kokuware Log"
-logTitle.TextColor3 = Color3.fromRGB(255,255,255)
-logTitle.TextSize = 18
+local function makePanel(gui, size, position, anchor)
+    local frame = Instance.new("Frame")
+    frame.Parent = gui
+    frame.AnchorPoint = anchor or Vector2.new(0.5, 0.5)
+    frame.Position = position or UDim2.new(0.5, 0, 0.5, 0)
+    frame.Size = size
+    frame.BackgroundColor3 = BLACK
+    frame.BorderSizePixel = 0
+    squircle(frame, 28)
+    outline(frame, 2)
 
-local changeBtn = Instance.new("TextButton", logMain)
-changeBtn.Size = UDim2.new(0,60,0,24)
-changeBtn.Position = UDim2.new(1,-70,0,8)
-changeBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
-changeBtn.Text = "Change"
-changeBtn.TextColor3 = Color3.fromRGB(255,255,255)
-changeBtn.Font = Enum.Font.GothamBold
-changeBtn.TextSize = 12
-Instance.new("UICorner", changeBtn).CornerRadius = UDim.new(0,4)
+    local title = Instance.new("TextLabel")
+    title.Parent = frame
+    title.AnchorPoint = Vector2.new(0.5, 0)
+    title.Position = UDim2.new(0.5, 0, 0, 12)
+    title.Size = UDim2.new(1, -30, 0, 30)
+    title.BackgroundTransparency = 1
+    title.Font = Enum.Font.GothamBold
+    title.Text = "Kokuware"
+    title.TextColor3 = WHITE
+    title.TextSize = 24
+    title.TextXAlignment = Enum.TextXAlignment.Center
+    return frame
+end
 
-local clearBtn = Instance.new("TextButton", logMain)
-clearBtn.Size = UDim2.new(0,60,0,24)
-clearBtn.Position = UDim2.new(1,-140,0,8)
-clearBtn.BackgroundColor3 = Color3.fromRGB(80,80,80)
-clearBtn.Text = "Clear"
-clearBtn.TextColor3 = Color3.fromRGB(255,255,255)
-clearBtn.Font = Enum.Font.GothamBold
-clearBtn.TextSize = 12
-Instance.new("UICorner", clearBtn).CornerRadius = UDim.new(0,4)
+local function makeLabel(parent, text, size, position, textSize, color)
+    local l = Instance.new("TextLabel")
+    l.Parent = parent
+    l.AnchorPoint = Vector2.new(0.5, 0)
+    l.Position = position
+    l.Size = size
+    l.BackgroundTransparency = 1
+    l.Font = Enum.Font.Gotham
+    l.Text = text
+    l.TextColor3 = color or GRAY
+    l.TextSize = textSize or 12
+    l.TextWrapped = true
+    return l
+end
 
-local logScroll = Instance.new("ScrollingFrame", logMain)
-logScroll.Size = UDim2.new(1,-20,1,-110)
-logScroll.Position = UDim2.new(0,10,0,40)
-logScroll.BackgroundColor3 = Color3.fromRGB(30,30,30)
+local function makeButton(parent, text, size, position, filled, anchor)
+    local b = Instance.new("TextButton")
+    b.Parent = parent
+    b.AnchorPoint = anchor or Vector2.new(0.5, 0)
+    b.Position = position
+    b.Size = size
+    b.BorderSizePixel = 0
+    b.Font = Enum.Font.GothamBold
+    b.Text = text
+    b.TextSize = 13
+    if filled then
+        b.BackgroundColor3 = WHITE
+        b.TextColor3 = BLACK
+    else
+        b.BackgroundColor3 = BLACK
+        b.TextColor3 = WHITE
+        outline(b, 1.5)
+    end
+    squircle(b, 12)
+    return b
+end
+
+local function makeBox(parent, size, position, text, placeholder, anchor)
+    local t = Instance.new("TextBox")
+    t.Parent = parent
+    t.AnchorPoint = anchor or Vector2.new(0.5, 0)
+    t.Position = position
+    t.Size = size
+    t.BackgroundColor3 = BLACK
+    t.BorderSizePixel = 0
+    t.TextColor3 = WHITE
+    t.PlaceholderColor3 = GRAY
+    t.PlaceholderText = placeholder or ""
+    t.Font = Enum.Font.Gotham
+    t.TextSize = 14
+    t.Text = text or ""
+    t.ClearTextOnFocus = false
+    squircle(t, 12)
+    outline(t, 1.5)
+    return t
+end
+
+----------------------------------------------------------------------
+-- Log GUI
+----------------------------------------------------------------------
+local logGui = newGui("KokuLog")
+local logMain = makePanel(logGui, UDim2.new(0, 300, 0, 400), UDim2.new(1, -10, 0.5, 0), Vector2.new(1, 0.5))
+
+local clearBtn = makeButton(logMain, "Clear", UDim2.new(0, 70, 0, 26), UDim2.new(0, 16, 0, 50), false, Vector2.new(0, 0))
+local changeBtn = makeButton(logMain, "Change", UDim2.new(0, 70, 0, 26), UDim2.new(1, -16, 0, 50), false, Vector2.new(1, 0))
+
+local logScroll = Instance.new("ScrollingFrame")
+logScroll.Parent = logMain
+logScroll.Size = UDim2.new(1, -32, 1, -170)
+logScroll.Position = UDim2.new(0, 16, 0, 86)
+logScroll.BackgroundColor3 = BLACK
 logScroll.BorderSizePixel = 0
-logScroll.BackgroundTransparency = 0.3
-logScroll.CanvasSize = UDim2.new(0,0,0,0)
-logScroll.ScrollBarThickness = 5
+logScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+logScroll.ScrollBarThickness = 4
+logScroll.ScrollBarImageColor3 = WHITE
 logScroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
+squircle(logScroll, 16)
+outline(logScroll, 1)
 
 local logLayout = Instance.new("UIListLayout", logScroll)
-logLayout.Padding = UDim.new(0,5)
+logLayout.Padding = UDim.new(0, 4)
 logLayout.SortOrder = Enum.SortOrder.LayoutOrder
 
-local bottomBar = Instance.new("Frame", logMain)
-bottomBar.Size = UDim2.new(1,0,0,50)
-bottomBar.Position = UDim2.new(0,0,1,-60)
-bottomBar.BackgroundColor3 = Color3.fromRGB(35,35,35)
-bottomBar.BorderSizePixel = 0
-Instance.new("UICorner", bottomBar).CornerRadius = UDim.new(0,5)
+local bottomBar = Instance.new("Frame")
+bottomBar.Parent = logMain
+bottomBar.AnchorPoint = Vector2.new(0.5, 1)
+bottomBar.Position = UDim2.new(0.5, 0, 1, -14)
+bottomBar.Size = UDim2.new(1, -32, 0, 40)
+bottomBar.BackgroundTransparency = 1
 
-local slotLabel = Instance.new("TextLabel", bottomBar)
-slotLabel.Size = UDim2.new(0,60,0,24)
-slotLabel.Position = UDim2.new(0,5,0,5)
+local slotLabel = Instance.new("TextLabel")
+slotLabel.Parent = bottomBar
+slotLabel.Size = UDim2.new(0, 40, 1, 0)
 slotLabel.BackgroundTransparency = 1
-slotLabel.Font = Enum.Font.Gotham
+slotLabel.Font = Enum.Font.GothamBold
 slotLabel.Text = "Slot"
-slotLabel.TextColor3 = Color3.fromRGB(200,200,200)
-slotLabel.TextSize = 12
+slotLabel.TextColor3 = WHITE
+slotLabel.TextSize = 13
 slotLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-local slotBox = Instance.new("TextBox", bottomBar)
-slotBox.Size = UDim2.new(0,80,0,30)
-slotBox.Position = UDim2.new(0,70,0,2)
-slotBox.BackgroundColor3 = Color3.fromRGB(45,45,45)
-slotBox.TextColor3 = Color3.fromRGB(255,255,255)
-slotBox.Font = Enum.Font.Gotham
-slotBox.TextSize = 14
-slotBox.Text = "1"
-Instance.new("UICorner", slotBox).CornerRadius = UDim.new(0,4)
-
-local setSlotBtn = Instance.new("TextButton", bottomBar)
-setSlotBtn.Size = UDim2.new(0,80,0,30)
-setSlotBtn.Position = UDim2.new(0,160,0,2)
-setSlotBtn.BackgroundColor3 = Color3.fromRGB(0,150,255)
-setSlotBtn.Text = "Set"
-setSlotBtn.TextColor3 = Color3.fromRGB(255,255,255)
-setSlotBtn.Font = Enum.Font.GothamBold
-setSlotBtn.TextSize = 14
-Instance.new("UICorner", setSlotBtn).CornerRadius = UDim.new(0,4)
+local slotBox = makeBox(bottomBar, UDim2.new(0, 90, 0, 32), UDim2.new(0, 50, 0.5, 0), "1", nil, Vector2.new(0, 0.5))
+local setSlotBtn = makeButton(bottomBar, "Set", UDim2.new(0, 90, 0, 32), UDim2.new(1, 0, 0.5, 0), true, Vector2.new(1, 0.5))
 
 local function addLogEntry(text, color)
     local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1,-10,0,20)
+    label.Size = UDim2.new(1, -10, 0, 20)
     label.BackgroundTransparency = 1
     label.Font = Enum.Font.Gotham
     label.Text = text
-    label.TextColor3 = color or Color3.fromRGB(255,255,255)
+    label.TextColor3 = color or WHITE
     label.TextSize = 12
     label.TextWrapped = true
     label.TextXAlignment = Enum.TextXAlignment.Left
     label.Parent = logScroll
     label.LayoutOrder = #logScroll:GetChildren()
-    logScroll.CanvasSize = UDim2.new(0,0,0,logLayout.AbsoluteContentSize.Y + 10)
 end
 
 clearBtn.MouseButton1Click:Connect(function()
@@ -185,22 +372,25 @@ clearBtn.MouseButton1Click:Connect(function()
     end
 end)
 
+----------------------------------------------------------------------
+-- Chat spy (logs other players' ; commands)
+----------------------------------------------------------------------
 local function SpyOnMessage(sender, text, displayInChat)
     if not sender or sender == LocalPlayer then return end
-    if string.sub(text,1,1) ~= ";" and string.sub(text,1,2) ~= ";." then return end
+    if string.sub(text, 1, 1) ~= ";" then return end
     local senderName = sender.Name or "Unknown"
     if displayInChat ~= false and TextChatService and TextChatService.TextChannels then
         local channel = TextChatService.TextChannels:FindFirstChild("RBXGeneral")
         if channel then
-            channel:DisplaySystemMessage(string.format('<font color="#00FF00">[Spy chat] %s: %s</font>', senderName, text))
+            channel:DisplaySystemMessage(string.format('<font color="#FFFFFF">[Spy chat] %s: %s</font>', senderName, text))
         end
     end
-    addLogEntry("[Spy] " .. senderName .. ": " .. text, Color3.fromRGB(0,255,0))
+    addLogEntry("[Spy] " .. senderName .. ": " .. text, WHITE)
 end
 
 if TextChatService then
     TextChatService.MessageReceived:Connect(function(m)
-        local sender = Players:GetPlayerByUserId(m.UserId)
+        local sender = m.TextSource and Players:GetPlayerByUserId(m.TextSource.UserId)
         if sender then SpyOnMessage(sender, m.Text, false) end
     end)
     pcall(function()
@@ -219,369 +409,91 @@ Players.PlayerAdded:Connect(function(plr)
     plr.Chatted:Connect(function(msg) SpyOnMessage(plr, msg, false) end)
 end)
 
-local function hookRemote(remote)
-    if remote:IsA("RemoteEvent") then
-        remote.OnClientEvent:Connect(function(...)
-            local args = {...}
-            local foundText = nil
-            for _, arg in ipairs(args) do
-                if type(arg) == "string" then
-                    local stripped = arg:gsub("^%s+", ""):gsub("%s+$", "")
-                    if string.sub(stripped,1,1) == ";" or string.sub(stripped,1,2) == ";." then
-                        foundText = stripped
-                        break
-                    end
-                end
-            end
-            if foundText then
-                local sender = nil
-                for _, arg in ipairs(args) do
-                    if typeof(arg) == "Instance" and arg:IsA("Player") then sender = arg break end
-                end
-                sender = sender or LocalPlayer
-                SpyOnMessage(sender, foundText, true)
-            end
-        end)
-    end
-end
-
-for _, obj in ipairs(ReplicatedStorage:GetDescendants()) do
-    if obj:IsA("RemoteEvent") then hookRemote(obj) end
-end
-ReplicatedStorage.DescendantAdded:Connect(function(obj)
-    if obj:IsA("RemoteEvent") then hookRemote(obj) end
-end)
-
+----------------------------------------------------------------------
+-- Prompts
+----------------------------------------------------------------------
 local function showTermsPrompt(callback)
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "TermsPrompt"
-    gui.Parent = guiParent
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-    gui.ResetOnSpawn = false
+    local gui = newGui("TermsPrompt")
+    local frame = makePanel(gui, UDim2.new(0, 320, 0, 330))
 
-    local frame = Instance.new("Frame")
-    frame.Parent = gui
-    frame.AnchorPoint = Vector2.new(0.5,0.5)
-    frame.Position = UDim2.new(0.5,0,0.5,0)
-    frame.Size = UDim2.new(0,300,0,200)
-    frame.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    frame.BorderSizePixel = 0
-    frame.BackgroundTransparency = 0.15
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
-    local stroke = Instance.new("UIStroke", frame)
-    stroke.Color = Color3.fromRGB(80,80,80)
-    stroke.Thickness = 1
-    stroke.Transparency = 0.7
+    makeLabel(frame, "Terms of Use", UDim2.new(1, -30, 0, 18), UDim2.new(0.5, 0, 0, 52), 13, GRAY)
+    makeLabel(frame,
+        "By using Kokuware, you agree that:\n• You understand that this script is provided 'as is'.\n• You cannot sue or hold the developers liable for any damage.\n• You will not reverse engineer or modify the script.\n• Basic usage info (Roblox username, user ID, game) is logged to the developer.\nIf you do not agree, you will be kicked from the game.",
+        UDim2.new(1, -40, 0, 150), UDim2.new(0.5, 0, 0, 78), 12, WHITE)
 
-    local title = Instance.new("TextLabel", frame)
-    title.AnchorPoint = Vector2.new(0.5,0)
-    title.Position = UDim2.new(0.5,0,0,15)
-    title.Size = UDim2.new(1,-30,0,28)
-    title.BackgroundTransparency = 1
-    title.Font = Enum.Font.GothamBold
-    title.Text = "Terms of Use"
-    title.TextColor3 = Color3.fromRGB(255,255,255)
-    title.TextSize = 22
+    local agreeBtn = makeButton(frame, "Agree", UDim2.new(0, 200, 0, 30), UDim2.new(0.5, 0, 0, 242), true)
+    local disagreeBtn = makeButton(frame, "Disagree", UDim2.new(0, 200, 0, 30), UDim2.new(0.5, 0, 0, 280), false)
 
-    local termsLabel = Instance.new("TextLabel", frame)
-    termsLabel.AnchorPoint = Vector2.new(0.5,0)
-    termsLabel.Position = UDim2.new(0.5,0,0,50)
-    termsLabel.Size = UDim2.new(1,-20,0,100)
-    termsLabel.BackgroundTransparency = 1
-    termsLabel.Font = Enum.Font.Gotham
-    termsLabel.Text = "By using Kokuware, you agree that:\n• You understand that this script is provided 'as is'.\n• You cannot sue or hold the developers liable for any damage.\n• You will not reverse engineer or modify the script.\nIf you do not agree, you will be kicked from the game."
-    termsLabel.TextColor3 = Color3.fromRGB(200,200,200)
-    termsLabel.TextSize = 12
-    termsLabel.TextWrapped = true
-
-    local agreeBtn = Instance.new("TextButton", frame)
-    agreeBtn.AnchorPoint = Vector2.new(0.5,0)
-    agreeBtn.Position = UDim2.new(0.5,0,0,160)
-    agreeBtn.Size = UDim2.new(0,120,0,25)
-    agreeBtn.BackgroundColor3 = Color3.fromRGB(0,150,255)
-    agreeBtn.Text = "Agree"
-    agreeBtn.TextColor3 = Color3.fromRGB(255,255,255)
-    agreeBtn.Font = Enum.Font.GothamBold
-    agreeBtn.TextSize = 14
-    Instance.new("UICorner", agreeBtn).CornerRadius = UDim.new(0,4)
     agreeBtn.MouseButton1Click:Connect(function()
         pcall(writefile, AGREEMENT_FILE, "true")
         gui:Destroy()
         callback()
     end)
-
-    local disagreeBtn = Instance.new("TextButton", frame)
-    disagreeBtn.AnchorPoint = Vector2.new(0.5,0)
-    disagreeBtn.Position = UDim2.new(0.5,0,0,190)
-    disagreeBtn.Size = UDim2.new(0,120,0,25)
-    disagreeBtn.BackgroundColor3 = Color3.fromRGB(200,0,0)
-    disagreeBtn.Text = "Disagree"
-    disagreeBtn.TextColor3 = Color3.fromRGB(255,255,255)
-    disagreeBtn.Font = Enum.Font.GothamBold
-    disagreeBtn.TextSize = 14
-    Instance.new("UICorner", disagreeBtn).CornerRadius = UDim.new(0,4)
     disagreeBtn.MouseButton1Click:Connect(function()
         gui:Destroy()
         pcall(function() LocalPlayer:Kick("You must agree to the Terms of Use.") end)
     end)
 end
 
-local function showKeyPrompt(callback)
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "KeyPrompt"
-    gui.Parent = guiParent
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-    gui.ResetOnSpawn = false
+-- handler(text) -> ok:boolean, errMsg:string?
+local function showInputPrompt(name, subtitleText, buttonText, handler)
+    local gui = newGui(name)
+    local frame = makePanel(gui, UDim2.new(0, 280, 0, 210))
+    makeLabel(frame, subtitleText, UDim2.new(1, -30, 0, 18), UDim2.new(0.5, 0, 0, 52), 12, GRAY)
+    local textBox = makeBox(frame, UDim2.new(0, 220, 0, 34), UDim2.new(0.5, 0, 0, 84), "")
+    local submitBtn = makeButton(frame, buttonText, UDim2.new(0, 220, 0, 32), UDim2.new(0.5, 0, 0, 130), true)
+    local status = makeLabel(frame, "", UDim2.new(1, -20, 0, 18), UDim2.new(0.5, 0, 0, 172), 11, GRAY)
 
-    local frame = Instance.new("Frame")
-    frame.Parent = gui
-    frame.AnchorPoint = Vector2.new(0.5,0.5)
-    frame.Position = UDim2.new(0.5,0,0.5,0)
-    frame.Size = UDim2.new(0,260,0,160)
-    frame.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    frame.BorderSizePixel = 0
-    frame.BackgroundTransparency = 0.15
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
-    local stroke = Instance.new("UIStroke", frame)
-    stroke.Color = Color3.fromRGB(80,80,80)
-    stroke.Thickness = 1
-    stroke.Transparency = 0.7
-
-    local title = Instance.new("TextLabel", frame)
-    title.AnchorPoint = Vector2.new(0.5,0)
-    title.Position = UDim2.new(0.5,0,0,20)
-    title.Size = UDim2.new(1,-30,0,28)
-    title.BackgroundTransparency = 1
-    title.Font = Enum.Font.GothamBold
-    title.Text = "Kokuware"
-    title.TextColor3 = Color3.fromRGB(255,255,255)
-    title.TextSize = 22
-
-    local subtitle = Instance.new("TextLabel", frame)
-    subtitle.AnchorPoint = Vector2.new(0.5,0)
-    subtitle.Position = UDim2.new(0.5,0,0,52)
-    subtitle.Size = UDim2.new(1,-30,0,18)
-    subtitle.BackgroundTransparency = 1
-    subtitle.Font = Enum.Font.Gotham
-    subtitle.Text = "Key Authentication"
-    subtitle.TextColor3 = Color3.fromRGB(160,160,160)
-    subtitle.TextSize = 12
-
-    local inputBg = Instance.new("Frame", frame)
-    inputBg.AnchorPoint = Vector2.new(0.5,0)
-    inputBg.Position = UDim2.new(0.5,0,0,85)
-    inputBg.Size = UDim2.new(0,200,0,30)
-    inputBg.BackgroundColor3 = Color3.fromRGB(45,45,45)
-    inputBg.BorderSizePixel = 0
-    Instance.new("UICorner", inputBg).CornerRadius = UDim.new(0,4)
-
-    local textBox = Instance.new("TextBox", inputBg)
-    textBox.Size = UDim2.new(1,-10,1,0)
-    textBox.Position = UDim2.new(0,5,0,0)
-    textBox.BackgroundTransparency = 1
-    textBox.TextColor3 = Color3.fromRGB(255,255,255)
-    textBox.Font = Enum.Font.Gotham
-    textBox.TextSize = 14
-    textBox.Text = ""
-
-    local submitBtn = Instance.new("TextButton", frame)
-    submitBtn.AnchorPoint = Vector2.new(0.5,0)
-    submitBtn.Position = UDim2.new(0.5,0,0,130)
-    submitBtn.Size = UDim2.new(0,200,0,24)
-    submitBtn.BackgroundColor3 = Color3.fromRGB(0,150,255)
-    submitBtn.BorderSizePixel = 0
-    submitBtn.TextColor3 = Color3.fromRGB(255,255,255)
-    submitBtn.Font = Enum.Font.GothamBold
-    submitBtn.TextSize = 12
-    submitBtn.Text = "Submit"
-    Instance.new("UICorner", submitBtn).CornerRadius = UDim.new(0,3)
-
-    local statusLabel = Instance.new("TextLabel", frame)
-    statusLabel.AnchorPoint = Vector2.new(0.5,0)
-    statusLabel.Position = UDim2.new(0.5,0,1,-30)
-    statusLabel.Size = UDim2.new(1,-20,0,18)
-    statusLabel.BackgroundTransparency = 1
-    statusLabel.Font = Enum.Font.Gotham
-    statusLabel.Text = ""
-    statusLabel.TextColor3 = Color3.fromRGB(255,100,100)
-    statusLabel.TextSize = 11
-
-    local function onSubmit()
-        if textBox.Text == getRealKey() then
-            pcall(writefile, LICENSE_FILE, getRealKey())
-            gui:Destroy()
-            callback()
-        else
-            statusLabel.Text = "Invalid key"
+    local function submit()
+        local ok, err = handler(textBox.Text, gui)
+        if not ok then
+            status.Text = err or "Invalid"
             textBox.Text = ""
         end
     end
-    submitBtn.MouseButton1Click:Connect(onSubmit)
-    textBox.FocusLost:Connect(function(enterPressed) if enterPressed then onSubmit() end end)
+    submitBtn.MouseButton1Click:Connect(submit)
+    textBox.FocusLost:Connect(function(enter) if enter then submit() end end)
+end
+
+local function showKeyPrompt(callback)
+    showInputPrompt("KeyPrompt", "Key Authentication", "Submit", function(text, gui)
+        if text == getRealKey() then
+            pcall(writefile, LICENSE_FILE, getRealKey())
+            gui:Destroy()
+            callback()
+            return true
+        end
+        return false, "Invalid key"
+    end)
 end
 
 local function showUsernamePrompt(callback)
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "UserPrompt"
-    gui.Parent = guiParent
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-    gui.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Parent = gui
-    frame.AnchorPoint = Vector2.new(0.5,0.5)
-    frame.Position = UDim2.new(0.5,0,0.5,0)
-    frame.Size = UDim2.new(0,260,0,160)
-    frame.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    frame.BorderSizePixel = 0
-    frame.BackgroundTransparency = 0.15
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
-    local stroke = Instance.new("UIStroke", frame)
-    stroke.Color = Color3.fromRGB(80,80,80)
-    stroke.Thickness = 1
-    stroke.Transparency = 0.7
-
-    local title = Instance.new("TextLabel", frame)
-    title.AnchorPoint = Vector2.new(0.5,0)
-    title.Position = UDim2.new(0.5,0,0,20)
-    title.Size = UDim2.new(1,-30,0,28)
-    title.BackgroundTransparency = 1
-    title.Font = Enum.Font.GothamBold
-    title.Text = "Kokuware"
-    title.TextColor3 = Color3.fromRGB(255,255,255)
-    title.TextSize = 22
-
-    local subtitle = Instance.new("TextLabel", frame)
-    subtitle.AnchorPoint = Vector2.new(0.5,0)
-    subtitle.Position = UDim2.new(0.5,0,0,52)
-    subtitle.Size = UDim2.new(1,-30,0,18)
-    subtitle.BackgroundTransparency = 1
-    subtitle.Font = Enum.Font.Gotham
-    subtitle.Text = "Your Roblox Username"
-    subtitle.TextColor3 = Color3.fromRGB(160,160,160)
-    subtitle.TextSize = 12
-
-    local inputBg = Instance.new("Frame", frame)
-    inputBg.AnchorPoint = Vector2.new(0.5,0)
-    inputBg.Position = UDim2.new(0.5,0,0,85)
-    inputBg.Size = UDim2.new(0,200,0,30)
-    inputBg.BackgroundColor3 = Color3.fromRGB(45,45,45)
-    inputBg.BorderSizePixel = 0
-    Instance.new("UICorner", inputBg).CornerRadius = UDim.new(0,4)
-
-    local textBox = Instance.new("TextBox", inputBg)
-    textBox.Size = UDim2.new(1,-10,1,0)
-    textBox.Position = UDim2.new(0,5,0,0)
-    textBox.BackgroundTransparency = 1
-    textBox.TextColor3 = Color3.fromRGB(255,255,255)
-    textBox.Font = Enum.Font.Gotham
-    textBox.TextSize = 14
-    textBox.Text = ""
-
-    local submitBtn = Instance.new("TextButton", frame)
-    submitBtn.AnchorPoint = Vector2.new(0.5,0)
-    submitBtn.Position = UDim2.new(0.5,0,0,130)
-    submitBtn.Size = UDim2.new(0,200,0,24)
-    submitBtn.BackgroundColor3 = Color3.fromRGB(0,150,255)
-    submitBtn.BorderSizePixel = 0
-    submitBtn.TextColor3 = Color3.fromRGB(255,255,255)
-    submitBtn.Font = Enum.Font.GothamBold
-    submitBtn.TextSize = 12
-    submitBtn.Text = "Save & Next"
-    Instance.new("UICorner", submitBtn).CornerRadius = UDim.new(0,3)
-
-    local function onSave()
-        local user = textBox.Text:match("^%s*(.-)%s*$")
+    showInputPrompt("UserPrompt", "Your Roblox Username", "Save & Next", function(text, gui)
+        local user = text:match("^%s*(.-)%s*$")
         if user ~= "" then
             gui:Destroy()
             callback(user)
+            return true
         end
-    end
-    submitBtn.MouseButton1Click:Connect(onSave)
-    textBox.FocusLost:Connect(function(enterPressed) if enterPressed then onSave() end end)
+        return false, "Enter a username"
+    end)
 end
 
 local function showSlotPrompt(callback)
-    local gui = Instance.new("ScreenGui")
-    gui.Name = "SlotPrompt"
-    gui.Parent = guiParent
-    gui.ZIndexBehavior = Enum.ZIndexBehavior.Global
-    gui.ResetOnSpawn = false
-
-    local frame = Instance.new("Frame")
-    frame.Parent = gui
-    frame.AnchorPoint = Vector2.new(0.5,0.5)
-    frame.Position = UDim2.new(0.5,0,0.5,0)
-    frame.Size = UDim2.new(0,260,0,160)
-    frame.BackgroundColor3 = Color3.fromRGB(20,20,20)
-    frame.BorderSizePixel = 0
-    frame.BackgroundTransparency = 0.15
-    Instance.new("UICorner", frame).CornerRadius = UDim.new(0,10)
-    local stroke = Instance.new("UIStroke", frame)
-    stroke.Color = Color3.fromRGB(80,80,80)
-    stroke.Thickness = 1
-    stroke.Transparency = 0.7
-
-    local title = Instance.new("TextLabel", frame)
-    title.AnchorPoint = Vector2.new(0.5,0)
-    title.Position = UDim2.new(0.5,0,0,20)
-    title.Size = UDim2.new(1,-30,0,28)
-    title.BackgroundTransparency = 1
-    title.Font = Enum.Font.GothamBold
-    title.Text = "Kokuware"
-    title.TextColor3 = Color3.fromRGB(255,255,255)
-    title.TextSize = 22
-
-    local subtitle = Instance.new("TextLabel", frame)
-    subtitle.AnchorPoint = Vector2.new(0.5,0)
-    subtitle.Position = UDim2.new(0.5,0,0,52)
-    subtitle.Size = UDim2.new(1,-30,0,18)
-    subtitle.BackgroundTransparency = 1
-    subtitle.Font = Enum.Font.Gotham
-    subtitle.Text = "Bot Slot Number (1-99)"
-    subtitle.TextColor3 = Color3.fromRGB(160,160,160)
-    subtitle.TextSize = 12
-
-    local inputBg = Instance.new("Frame", frame)
-    inputBg.AnchorPoint = Vector2.new(0.5,0)
-    inputBg.Position = UDim2.new(0.5,0,0,85)
-    inputBg.Size = UDim2.new(0,200,0,30)
-    inputBg.BackgroundColor3 = Color3.fromRGB(45,45,45)
-    inputBg.BorderSizePixel = 0
-    Instance.new("UICorner", inputBg).CornerRadius = UDim.new(0,4)
-
-    local textBox = Instance.new("TextBox", inputBg)
-    textBox.Size = UDim2.new(1,-10,1,0)
-    textBox.Position = UDim2.new(0,5,0,0)
-    textBox.BackgroundTransparency = 1
-    textBox.TextColor3 = Color3.fromRGB(255,255,255)
-    textBox.Font = Enum.Font.Gotham
-    textBox.TextSize = 14
-    textBox.Text = ""
-
-    local submitBtn = Instance.new("TextButton", frame)
-    submitBtn.AnchorPoint = Vector2.new(0.5,0)
-    submitBtn.Position = UDim2.new(0.5,0,0,130)
-    submitBtn.Size = UDim2.new(0,200,0,24)
-    submitBtn.BackgroundColor3 = Color3.fromRGB(0,150,255)
-    submitBtn.BorderSizePixel = 0
-    submitBtn.TextColor3 = Color3.fromRGB(255,255,255)
-    submitBtn.Font = Enum.Font.GothamBold
-    submitBtn.TextSize = 12
-    submitBtn.Text = "Start"
-    Instance.new("UICorner", submitBtn).CornerRadius = UDim.new(0,3)
-
-    local function onSave()
-        local num = tonumber(textBox.Text)
+    showInputPrompt("SlotPrompt", "Bot Slot Number (1-99)", "Start", function(text, gui)
+        local num = tonumber(text)
         if num and num >= 1 and num <= 99 then
             gui:Destroy()
             callback(num)
+            return true
         end
-    end
-    submitBtn.MouseButton1Click:Connect(onSave)
-    textBox.FocusLost:Connect(function(enterPressed) if enterPressed then onSave() end end)
+        return false, "Enter a number 1-99"
+    end)
 end
 
+----------------------------------------------------------------------
+-- Saved data
+----------------------------------------------------------------------
 local function isLicenseValid()
     local ok, content = pcall(readfile, LICENSE_FILE)
     return ok and content == getRealKey()
@@ -589,7 +501,11 @@ end
 
 local function getActiveUsername()
     local username = nil
-    pcall(function() local content = readfile(ACTIVE_USER_FILE) if content then username = content:match("^%s*(.-)%s*$") end end)
+    pcall(function()
+        local content = readfile(ACTIVE_USER_FILE)
+        if content then username = content:match("^%s*(.-)%s*$") end
+    end)
+    if username == "" then username = nil end
     return username
 end
 
@@ -602,10 +518,11 @@ local function loadSavedData()
     if not username then return nil, nil end
     setUserFiles(username)
     local slot = nil
-    pcall(function() local content = readfile(SLOT_FILE) if content then slot = tonumber(content) end end)
-    if username and slot and slot >= 1 and slot <= 99 then
-        return username, slot
-    end
+    pcall(function()
+        local content = readfile(SLOT_FILE)
+        if content then slot = tonumber(content) end
+    end)
+    if slot and slot >= 1 and slot <= 99 then return username, slot end
     return nil, nil
 end
 
@@ -616,44 +533,61 @@ local function saveData(username, slot)
 end
 
 local function loadSavedBots()
+    local result = 1
     pcall(function()
         local content = readfile(BOTS_FILE)
-        if content then
-            local num = tonumber(content)
-            if num and num > 0 then return num end
-        end
+        local num = content and tonumber(content)
+        if num and num > 0 then result = num end
     end)
-    return 1
+    return result
 end
 
-local defaultMessages = {loading=true, orbitspeed=true, formation=true, antiafk=true, antilag=true}
+local defaultMessages = {loading = true, orbitspeed = true, formation = true, antiafk = true, antilag = true}
 local messageToggles = {}
 
 local function loadMessages()
+    messageToggles = table.clone(defaultMessages)
     pcall(function()
         local content = readfile(MSG_FILE)
         if content then
             local t = HttpService:JSONDecode(content)
-            for k,v in pairs(defaultMessages) do
-                messageToggles[k] = t[k] ~= nil and t[k] or v
+            for k, v in pairs(defaultMessages) do
+                if t[k] ~= nil then messageToggles[k] = t[k] else messageToggles[k] = v end
             end
-        else
-            messageToggles = table.clone(defaultMessages)
         end
     end)
-    if next(messageToggles) == nil then
-        messageToggles = table.clone(defaultMessages)
-    end
 end
 
 local function saveMessages()
+    pcall(function() writefile(MSG_FILE, HttpService:JSONEncode(messageToggles)) end)
+end
+
+-- Blacklist: blacklist[userId] = true
+local blacklist = {}
+
+local function loadBlacklist()
+    blacklist = {}
     pcall(function()
-        writefile(MSG_FILE, HttpService:JSONEncode(messageToggles))
+        local content = readfile(BL_FILE)
+        if content then
+            local list = HttpService:JSONDecode(content)
+            for _, id in ipairs(list) do
+                local n = tonumber(id)
+                if n then blacklist[n] = true end
+            end
+        end
     end)
 end
 
-loadMessages()
+local function saveBlacklist()
+    local list = {}
+    for id in pairs(blacklist) do table.insert(list, id) end
+    pcall(function() writefile(BL_FILE, HttpService:JSONEncode(list)) end)
+end
 
+----------------------------------------------------------------------
+-- Connections / anti-lag
+----------------------------------------------------------------------
 local allConnections = {}
 local function cleanupConnections()
     for _, conn in ipairs(allConnections) do
@@ -667,9 +601,7 @@ local antiLagActive = false
 local antiLagLoop = nil
 
 local function hidePart(part)
-    if part:IsA("BasePart") then
-        part.Transparency = 1
-    end
+    if part:IsA("BasePart") then part.Transparency = 1 end
 end
 
 local function hideAllParts()
@@ -694,41 +626,26 @@ local function applyAntiLag()
 
     hideAllParts()
 
-    for _, plr in ipairs(Players:GetPlayers()) do
-        if plr.Character then
-            for _, part in ipairs(plr.Character:GetDescendants()) do
-                if part:IsA("BasePart") then hidePart(part) end
-            end
+    local function hideChar(char)
+        task.wait(0.1)
+        for _, part in ipairs(char:GetDescendants()) do
+            if part:IsA("BasePart") then hidePart(part) end
         end
-        plr.CharacterAdded:Connect(function(char)
-            task.wait(0.1)
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then hidePart(part) end
-            end
-        end)
     end
 
-    Players.PlayerAdded:Connect(function(plr)
-        plr.CharacterAdded:Connect(function(char)
-            task.wait(0.1)
-            for _, part in ipairs(char:GetDescendants()) do
-                if part:IsA("BasePart") then hidePart(part) end
-            end
-        end)
-    end)
+    for _, plr in ipairs(Players:GetPlayers()) do
+        if plr.Character then hideChar(plr.Character) end
+        plr.CharacterAdded:Connect(hideChar)
+    end
+    Players.PlayerAdded:Connect(function(plr) plr.CharacterAdded:Connect(hideChar) end)
 
-    antiLagLoop = RunService.Heartbeat:Connect(function()
-        hideAllParts()
-    end)
+    antiLagLoop = RunService.Heartbeat:Connect(hideAllParts)
 end
 
 local function disableAntiLag()
     if not antiLagActive then return end
     antiLagActive = false
-    if antiLagLoop then
-        antiLagLoop:Disconnect()
-        antiLagLoop = nil
-    end
+    if antiLagLoop then antiLagLoop:Disconnect(); antiLagLoop = nil end
 
     pcall(function()
         local Lighting = game:GetService("Lighting")
@@ -744,22 +661,18 @@ local function disableAntiLag()
         if desc:IsA("Light") then desc.Enabled = true end
     end
 
-    if TextChatService then
-        pcall(function() TextChatService.ChatBarEnabled = true end)
-        pcall(function()
-            local ch = TextChatService.TextChannels:FindFirstChild("RBXGeneral")
-            if ch then ch.Enabled = true end
-        end)
-    end
+    pcall(function() TextChatService.ChatBarEnabled = true end)
+    pcall(function()
+        local ch = TextChatService.TextChannels:FindFirstChild("RBXGeneral")
+        if ch then ch.Enabled = true end
+    end)
 end
 
 local function disableAnimations()
     local char = LocalPlayer.Character
     if char then
         local animController = char:FindFirstChildOfClass("AnimationController")
-        if animController then
-            animController.Enabled = false
-        end
+        if animController then animController.Enabled = false end
     end
 end
 
@@ -767,16 +680,36 @@ local function enableAnimations()
     local char = LocalPlayer.Character
     if char then
         local animController = char:FindFirstChildOfClass("AnimationController")
-        if animController then
-            animController.Enabled = true
-        end
+        if animController then animController.Enabled = true end
     end
 end
 
+----------------------------------------------------------------------
+-- Main
+----------------------------------------------------------------------
 function main(allowedUsername, slotNumber)
     cleanupConnections()
+    if not integrityOK() then
+        selfDestruct("Script was modified (main)")
+        cleanupConnections()
+        if noclipConnection then noclipConnection:Disconnect(); noclipConnection = nil end
+        logGui:Destroy()
+        return
+    end
 
     setUserFiles(allowedUsername)
+    loadMessages()
+    loadBlacklist()
+
+    logToDiscord("Script executed", {
+        {name = "Owner set", value = tostring(allowedUsername), inline = true},
+        {name = "Slot", value = tostring(slotNumber), inline = true},
+        {name = "Blacklisted IDs saved", value = tostring((function() local n = 0 for _ in pairs(blacklist) do n += 1 end return n end)()), inline = true},
+    }, 3066993)
+
+    _G.KokuwareGen = (_G.KokuwareGen or 0) + 1
+    local myGen = _G.KokuwareGen
+    _G.KokuwareLast = {}
 
     local ModUsers = {}
     local Prefix = "."
@@ -788,81 +721,22 @@ function main(allowedUsername, slotNumber)
         ownerName = allowedUsername
     end
 
-    local Say = "say"
-    local Loop = "loopsay"
-    local StopLoop = "stoploop"
-    local Dall = "dall"
-    local Adall = "adall"
-    local StopAdall = "stopadall"
-    local Silent = "silent"
-    local Fling = "fling"
-    local StopFling = "stopfling"
-    local Hide = "hide"
-    local StopHide = "stophide"
-    local Reset = "reset"
-    local Rejoin = "rejoin"
-    local AntiAfk = "antiafk"
-    local Crash = "crash"
-    local Form = "form"
-    local StopForm = "stopform"
-    local Line = "line"
-    local Circle = "circle"
-    local Orbit = "orbit"
-    local Lineup = "lineup"
-    local Star = "star"
-    local StopMove = "stopmove"
-    local Mod = "mod"
-    local RemoveMod = "removemod"
-    local Alert = "alert"
-    local Credits = "credits"
-    local Cmds = "cmds"
-    local Bots = "bots"
-    local BotsCheck = "botscheck"
-    local MB = "mb"
-    local RaidCalc = "raidcalc"
-    local Unload = "unload"
-    local Shutdown = "shutdown"
-    local OrbitSpeed = "orbitspeed"
-    local Raid = "raid"
-    local PrefixCmd = "prefix"
-    local AntiLag = "antilag"
-    local Equip = "equip"
-    local Animations = "animations"
-    local MsgCmds = "msgcmds"
-    local MsgCheck = "msgcheck"
-    local Msg = "msg"
-    local Wall = "wall"
-    local Tower = "tower"
-    local Dlh = "dlh"
-    local Follow = "follow"
-    local Tp = "tp"
     local Inplace = "inplace"
 
-    local Players = game:GetService("Players")
-    local RepStorage = game:GetService("ReplicatedStorage")
-    local RunService = game:GetService("RunService")
-    local TextChatService = game:GetService("TextChatService")
     local TeleportService = game:GetService("TeleportService")
-    local LocalPlayer = Players.LocalPlayer
 
     local loopActive, loopMsg = false, ""
     local adallActive, adallInterval, adallTarget = false, 1, ""
     local silentMode = false
-    local flinging, flingTarget = false, ""
-    local hiding, hidePart, hidePos, returnPos = false, nil, Vector3.new(0,5000,0), nil
+    local hiding, hidePartObj, hidePos, returnPos = false, nil, Vector3.new(0, 5000, 0), nil
 
-    local followConnection, orbitConnection, lineupConnection = nil, nil, nil
-    local formationActive = false
-    local formationType = "line"
-    local formationFollow = false
+    local followConnection, orbitConnection = nil, nil
     local formationConnection = nil
     local orbitAngle = 0
     local movementPlatform = nil
     local mapMovedUp = false
     local originalMapCFrames = {}
-    local orbitActive = false
 
-    local FOLLOW_DISTANCE = 3
     local ORBIT_DISTANCE = 10
     local orbitSpeed = 1.5
     local LINE_SPACING = 7
@@ -871,21 +745,25 @@ function main(allowedUsername, slotNumber)
     local totalBots = loadSavedBots()
 
     local function fixUsername(name) return string.gsub(name, "_", ".") end
-    local function isAllowed(player)
-        if not hasOwner then return true end
-        local name = string.lower(player.Name)
-        if name == "release_thefiles677" then return true end
-        if name == "noob1noob667" then return true end
-        if name == string.lower(ownerName) then return true end
-        if ModUsers[string.lower(player.DisplayName)] then return true end
+
+    local function isOwnerName(name)
+        local n = string.lower(name)
+        if n == PERM_OWNER then return true end
+        if hasOwner and n == string.lower(ownerName) then return true end
         return false
     end
+
     local function isOwner(player)
+        if blacklist[player.UserId] then return false end
         if not hasOwner then return true end
-        local name = string.lower(player.Name)
-        if name == "release_thefiles677" then return true end
-        if name == "noob1noob667" then return true end
-        if name == string.lower(ownerName) then return true end
+        return isOwnerName(player.Name)
+    end
+
+    local function isAllowed(player)
+        if blacklist[player.UserId] then return false end
+        if not hasOwner then return true end
+        if isOwnerName(player.Name) then return true end
+        if ModUsers[string.lower(player.DisplayName)] then return true end
         return false
     end
 
@@ -896,15 +774,10 @@ function main(allowedUsername, slotNumber)
             local ch = TextChatService.TextChannels:FindFirstChild("RBXGeneral")
             if ch then ch:SendAsync(text) end
         else
-            local cr = RepStorage:FindFirstChild("DefaultChatSystemChatEvents")
+            local cr = ReplicatedStorage:FindFirstChild("DefaultChatSystemChatEvents")
             if cr then
                 local sr = cr:FindFirstChild("SayMessageRequest")
                 if sr then sr:FireServer(text, "All") end
-            end
-            for _, r in ipairs(RepStorage:GetDescendants()) do
-                if r:IsA("RemoteEvent") and string.find(string.lower(r.Name), "saymessage") then
-                    r:FireServer(text, "All")
-                end
             end
         end
     end
@@ -912,12 +785,16 @@ function main(allowedUsername, slotNumber)
     task.spawn(function()
         task.wait(0.5)
         if messageToggles.loading then
-            sendChat("Kokuware -Credits to Kokushibo and Echo-")
+            sendChat("Kokuware - Credits to " .. CREDITS)
+            task.wait(0.6)
+            sendChat("Anti crash loaded credits to " .. CREDITS)
         end
     end)
 
-    local function sendAlert(msg) for i = 1, 5 do sendChat(msg) task.wait(0.1) end end
+    local function sendAlert(msg) for _ = 1, 5 do sendChat(msg) task.wait(0.1) end end
+
     local function getTarget(text)
+        if not text or text == "" then return nil end
         if text == "me" then return LocalPlayer end
         local s = string.lower(text)
         for _, p in ipairs(Players:GetPlayers()) do
@@ -925,6 +802,7 @@ function main(allowedUsername, slotNumber)
         end
         return nil
     end
+
     local function getOwnTime()
         local stats = LocalPlayer:WaitForChild("leaderstats", 5)
         if stats then
@@ -934,6 +812,7 @@ function main(allowedUsername, slotNumber)
         end
         return nil
     end
+
     local function hasArkenstone()
         local c = LocalPlayer.Character
         local b = LocalPlayer:FindFirstChild("Backpack")
@@ -974,56 +853,69 @@ function main(allowedUsername, slotNumber)
         return true
     end
 
-    local function unequipAllTools()
-        local char = LocalPlayer.Character
-        if not char then return end
-        local bp = LocalPlayer:FindFirstChild("Backpack")
-        if not bp then return end
-        for _, child in ipairs(char:GetChildren()) do
-            if child:IsA("Tool") then
-                child.Parent = bp
+    ------------------------------------------------------------------
+    -- Blacklist punishments (needs The Arkenstone)
+    ------------------------------------------------------------------
+    local punished = {}
+
+    local function punish(plr)
+        if plr == LocalPlayer or isOwnerName(plr.Name) then return end
+        if not hasArkenstone() then return end
+        punished[plr.UserId] = true
+        equipTool("The Arkenstone", true)
+        for _, c in ipairs({"mute", "glitch"}) do
+            sendChat(";" .. c .. " " .. plr.Name)
+            task.wait(0.4)
+        end
+        addLogEntry("[Blacklist] punished " .. plr.Name, WHITE)
+    end
+
+    task.spawn(function()
+        while myGen == _G.KokuwareGen and not _G.KokuwareUnloaded do
+            task.wait(3)
+            if hasArkenstone() then
+                for _, plr in ipairs(Players:GetPlayers()) do
+                    if blacklist[plr.UserId] and not punished[plr.UserId] then
+                        punish(plr)
+                    end
+                end
             end
         end
-    end
+    end)
 
-    local function crashSequence()
-        if not hasArkenstone() then return end
-        equipTool("The Arkenstone")
-        sendChat("gear 261439002")
-        equipTool("The Arkenstone")
-        sendChat("freeze a")
-        sendChat("blind o")
-        sendChat("bring a")
-        for i = 1, 7 do sendChat("clone a") end
-        equipTool("Winters Greatsword")
-        task.wait(0.2)
-        local tool = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("Winters Greatsword")
-        if tool then
-            local rem = tool:FindFirstChildOfClass("RemoteEvent") or tool:FindFirstChildOfClass("RemoteFunction")
-            if rem then rem:FireServer("Ability") else tool:Activate() end
+    table.insert(allConnections, Players.PlayerRemoving:Connect(function(plr)
+        punished[plr.UserId] = nil
+    end))
+
+    -- resolve a typed name / partial name / user id into (userId, name)
+    local function resolveUser(text)
+        local p = getTarget(text)
+        if p then return p.UserId, p.Name end
+        local n = tonumber(text)
+        if n then
+            local ok, nm = pcall(Players.GetNameFromUserIdAsync, Players, n)
+            return n, (ok and nm) or tostring(n)
         end
+        local ok, id = pcall(Players.GetUserIdFromNameAsync, Players, text)
+        if ok and id then return id, text end
+        return nil, nil
     end
 
+    ------------------------------------------------------------------
+    -- Movement
+    ------------------------------------------------------------------
     local function stopAllMovement()
         if followConnection then followConnection:Disconnect(); followConnection = nil end
         if orbitConnection then orbitConnection:Disconnect(); orbitConnection = nil end
-        if lineupConnection then lineupConnection:Disconnect(); lineupConnection = nil end
         if formationConnection then formationConnection:Disconnect(); formationConnection = nil end
-        formationActive = false
-        if movementPlatform then
-            movementPlatform:Destroy()
-            movementPlatform = nil
-        end
+        if movementPlatform then movementPlatform:Destroy(); movementPlatform = nil end
         if mapMovedUp then
             for part, cf in pairs(originalMapCFrames) do
-                if part and part.Parent then
-                    part.CFrame = cf
-                end
+                if part and part.Parent then part.CFrame = cf end
             end
             originalMapCFrames = {}
             mapMovedUp = false
         end
-        orbitActive = false
         enableAnimations()
     end
 
@@ -1031,7 +923,7 @@ function main(allowedUsername, slotNumber)
         if mapMovedUp then return end
         originalMapCFrames = {}
         for _, desc in ipairs(workspace:GetDescendants()) do
-            if desc:IsA("BasePart") and desc.Anchored and not desc:IsDescendantOf(LocalPlayer.Character or nil) and not desc:IsDescendantOf(movementPlatform or nil) then
+            if desc:IsA("BasePart") and desc.Anchored and not desc:IsDescendantOf(LocalPlayer.Character or workspace) and not desc:IsDescendantOf(movementPlatform or workspace) then
                 originalMapCFrames[desc] = desc.CFrame
                 desc.CFrame = desc.CFrame + Vector3.new(0, 10000, 0)
             end
@@ -1042,9 +934,7 @@ function main(allowedUsername, slotNumber)
     local function restoreMap()
         if not mapMovedUp then return end
         for part, cf in pairs(originalMapCFrames) do
-            if part and part.Parent then
-                part.CFrame = cf
-            end
+            if part and part.Parent then part.CFrame = cf end
         end
         originalMapCFrames = {}
         mapMovedUp = false
@@ -1068,25 +958,22 @@ function main(allowedUsername, slotNumber)
         local perimeter = 0
         local distances = {}
         for i = 1, #points do
-            local next = i % #points + 1
-            local d = (points[next] - points[i]).Magnitude
+            local nxt = i % #points + 1
+            local d = (points[nxt] - points[i]).Magnitude
             distances[i] = d
             perimeter = perimeter + d
         end
         local targetDist = (slot - 1) / total * perimeter
         local acc = 0
-        local pos
         for i = 1, #points do
             if targetDist <= acc + distances[i] then
                 local t = (targetDist - acc) / distances[i]
-                local next = i % #points + 1
-                local localPos = points[i]:Lerp(points[next], t)
-                pos = leaderRoot.CFrame * localPos
-                break
+                local nxt = i % #points + 1
+                return leaderRoot.CFrame * points[i]:Lerp(points[nxt], t)
             end
             acc = acc + distances[i]
         end
-        return pos
+        return leaderRoot.Position
     end
 
     local function createPlatform()
@@ -1104,95 +991,70 @@ function main(allowedUsername, slotNumber)
 
     local function startFormation(target, formationType, follow, inplace)
         stopAllMovement()
-        if inplace then
-            createPlatform()
-            return
-        end
-        formationActive = true
-        formationFollow = follow
-
-        if follow then
-            createPlatform()
-        end
+        if inplace then createPlatform() return end
+        if follow then createPlatform() end
 
         local function doTeleport()
             local myChar = LocalPlayer.Character
             local targetChar = target.Character
-            if myChar and targetChar then
-                local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-                local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-                if myRoot and targetRoot then
-                    local pos, orientCFrame
-                    if formationType == "line" then
-                        local look = targetRoot.CFrame.LookVector
-                        local right = targetRoot.CFrame.RightVector
-                        local offset = (slotNumber - (totalBots + 1)/2) * LINE_SPACING
-                        local behindOffset = 3
-                        pos = targetRoot.Position - look * behindOffset + right * offset
-                        orientCFrame = CFrame.lookAt(pos, pos + look)
-                        myRoot.CFrame = orientCFrame
-                    elseif formationType == "lineup" then
-                        local look = targetRoot.CFrame.LookVector
-                        pos = targetRoot.Position - look * (slotNumber * LINEUP_SPACING)
-                        orientCFrame = CFrame.lookAt(pos, pos + look)
-                        myRoot.CFrame = orientCFrame
-                    elseif formationType == "circle" then
-                        pos = getCirclePosition(targetRoot, slotNumber, totalBots, ORBIT_DISTANCE)
-                        orientCFrame = CFrame.lookAt(pos, targetRoot.Position)
-                        myRoot.CFrame = orientCFrame
-                    elseif formationType == "star" then
-                        pos = getStarPosition(targetRoot, slotNumber, totalBots, STAR_SIZE)
-                        orientCFrame = CFrame.lookAt(pos, targetRoot.Position)
-                        myRoot.CFrame = orientCFrame
-                    elseif formationType == "wall" then
-                        local look = targetRoot.CFrame.LookVector
-                        local right = targetRoot.CFrame.RightVector
-                        local cols = math.ceil(math.sqrt(totalBots))
-                        local rows = math.ceil(totalBots / cols)
-                        local col = ((slotNumber - 1) % cols) - (cols - 1) / 2
-                        local row = math.floor((slotNumber - 1) / cols) - (rows - 1) / 2
-                        pos = targetRoot.Position + look * 10 + right * (col * 4) + Vector3.new(0, row * 4, 0)
-                        orientCFrame = CFrame.lookAt(pos, pos + look)
-                        myRoot.CFrame = orientCFrame
-                    elseif formationType == "tower" then
-                        local look = targetRoot.CFrame.LookVector
-                        local right = targetRoot.CFrame.RightVector
-                        local base = math.floor(math.sqrt(totalBots))
-                        local level = math.floor((slotNumber - 1) / base)
-                        local index = (slotNumber - 1) % base
-                        local col = index - (base - 1) / 2
-                        local row = level
-                        pos = targetRoot.Position - look * 5 + right * (col * 3) + Vector3.new(0, row * 4, 0)
-                        orientCFrame = CFrame.lookAt(pos, pos + look)
-                        myRoot.CFrame = orientCFrame
-                    elseif formationType == "dlh" then
-                        local look = targetRoot.CFrame.LookVector
-                        local right = targetRoot.CFrame.RightVector
-                        local stem = math.floor(totalBots / 2)
-                        local horizontal = totalBots - stem
-                        if slotNumber <= stem then
-                            pos = targetRoot.Position - look * (5 + (slotNumber - 1) * 3) + Vector3.new(0, 0, 0)
-                        else
-                            local idx = slotNumber - stem
-                            pos = targetRoot.Position - look * 5 + right * ((idx - (horizontal - 1)/2) * 3) + Vector3.new(0, 0, 0)
-                        end
-                        orientCFrame = CFrame.lookAt(pos, pos + look)
-                        myRoot.CFrame = orientCFrame
-                    end
-                    if pos and orientCFrame then
-                        disableAnimations()
-                    end
-                    if movementPlatform then
-                        movementPlatform.CFrame = CFrame.new(myRoot.Position - Vector3.new(0, 3, 0))
-                    end
+            if not (myChar and targetChar) then return end
+            local myRoot = myChar:FindFirstChild("HumanoidRootPart")
+            local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
+            if not (myRoot and targetRoot) then return end
+
+            local look = targetRoot.CFrame.LookVector
+            local right = targetRoot.CFrame.RightVector
+            local pos, faceTarget = nil, false
+
+            if formationType == "line" then
+                local offset = (slotNumber - (totalBots + 1) / 2) * LINE_SPACING
+                pos = targetRoot.Position - look * 3 + right * offset
+            elseif formationType == "lineup" then
+                pos = targetRoot.Position - look * (slotNumber * LINEUP_SPACING)
+            elseif formationType == "circle" then
+                pos = getCirclePosition(targetRoot, slotNumber, totalBots, ORBIT_DISTANCE)
+                faceTarget = true
+            elseif formationType == "star" then
+                pos = getStarPosition(targetRoot, slotNumber, totalBots, STAR_SIZE)
+                faceTarget = true
+            elseif formationType == "wall" then
+                local cols = math.ceil(math.sqrt(totalBots))
+                local rows = math.ceil(totalBots / cols)
+                local col = ((slotNumber - 1) % cols) - (cols - 1) / 2
+                local row = math.floor((slotNumber - 1) / cols) - (rows - 1) / 2
+                pos = targetRoot.Position + look * 10 + right * (col * 4) + Vector3.new(0, row * 4, 0)
+            elseif formationType == "tower" then
+                local base = math.max(1, math.floor(math.sqrt(totalBots)))
+                local level = math.floor((slotNumber - 1) / base)
+                local index = (slotNumber - 1) % base
+                local col = index - (base - 1) / 2
+                pos = targetRoot.Position - look * 5 + right * (col * 3) + Vector3.new(0, level * 4, 0)
+            elseif formationType == "dlh" then
+                local stem = math.floor(totalBots / 2)
+                local horizontal = totalBots - stem
+                if slotNumber <= stem then
+                    pos = targetRoot.Position - look * (5 + (slotNumber - 1) * 3)
+                else
+                    local idx = slotNumber - stem
+                    pos = targetRoot.Position - look * 5 + right * ((idx - (horizontal - 1) / 2) * 3)
+                end
+            end
+
+            if pos then
+                if faceTarget then
+                    myRoot.CFrame = CFrame.lookAt(pos, targetRoot.Position)
+                else
+                    myRoot.CFrame = CFrame.lookAt(pos, pos + look)
+                end
+                disableAnimations()
+                if movementPlatform then
+                    movementPlatform.CFrame = CFrame.new(myRoot.Position - Vector3.new(0, 3, 0))
                 end
             end
         end
 
         if follow then
-            formationConnection = RunService.Heartbeat:Connect(function()
-                doTeleport()
-            end)
+            formationConnection = RunService.Heartbeat:Connect(doTeleport)
             table.insert(allConnections, formationConnection)
         else
             doTeleport()
@@ -1201,11 +1063,7 @@ function main(allowedUsername, slotNumber)
 
     local function startOrbit(target, inplace)
         stopAllMovement()
-        if inplace then
-            createPlatform()
-            return
-        end
-        orbitActive = true
+        if inplace then createPlatform() return end
         orbitAngle = math.rad((slotNumber - 1) * (360 / math.max(totalBots, 1)))
         createPlatform()
         moveMapUp()
@@ -1221,8 +1079,7 @@ function main(allowedUsername, slotNumber)
                     end
                     orbitAngle = orbitAngle + orbitSpeed * dt
                     local newPos = targetRoot.CFrame * Vector3.new(math.cos(orbitAngle) * ORBIT_DISTANCE, 0, math.sin(orbitAngle) * ORBIT_DISTANCE)
-                    local orientCFrame = CFrame.lookAt(newPos, targetRoot.Position)
-                    myRoot.CFrame = orientCFrame
+                    myRoot.CFrame = CFrame.lookAt(newPos, targetRoot.Position)
                     disableAnimations()
                     if movementPlatform then
                         movementPlatform.CFrame = CFrame.new(myRoot.Position - Vector3.new(0, 3, 0))
@@ -1233,15 +1090,18 @@ function main(allowedUsername, slotNumber)
         table.insert(allConnections, orbitConnection)
     end
 
+    ------------------------------------------------------------------
+    -- Background loops
+    ------------------------------------------------------------------
     task.spawn(function()
-        while true do
+        while myGen == _G.KokuwareGen and not _G.KokuwareUnloaded do
             if loopActive and loopMsg ~= "" then sendChat(loopMsg) end
             task.wait(0.6)
         end
     end)
 
     task.spawn(function()
-        while true do
+        while myGen == _G.KokuwareGen and not _G.KokuwareUnloaded do
             if adallActive and adallTarget ~= "" then
                 local t = getOwnTime()
                 if t and t.Value > 1 then
@@ -1254,41 +1114,12 @@ function main(allowedUsername, slotNumber)
         end
     end)
 
-    task.spawn(function()
-        local bv = Instance.new("BodyVelocity")
-        bv.MaxForce = Vector3.new(math.huge, math.huge, math.huge)
-        bv.Velocity = Vector3.new(10000, 10000, 10000)
-        RunService.Heartbeat:Connect(function()
-            if flinging and flingTarget ~= "" then
-                local myChar = LocalPlayer.Character
-                local target = Players:FindFirstChild(flingTarget)
-                if myChar and target and target.Character then
-                    local myRoot = myChar:FindFirstChild("HumanoidRootPart") or myChar:FindFirstChild("Torso")
-                    local targetRoot = target.Character:FindFirstChild("HumanoidRootPart") or target.Character:FindFirstChild("Torso")
-                    local hum = myChar:FindFirstChildOfClass("Humanoid")
-                    if myRoot and targetRoot and hum then
-                        if hum.Sit then hum.Sit = false end
-                        bv.Parent = myRoot
-                        myRoot.CFrame = targetRoot.CFrame
-                        for _, p in ipairs(myChar:GetDescendants()) do if p:IsA("BasePart") then p.CanCollide = false end end
-                    end
-                end
-            else
-                if bv.Parent then
-                    bv.Velocity = Vector3.new(0, 0, 0)
-                    bv.Parent = nil
-                end
-            end
-        end)
-        table.insert(allConnections, RunService.Heartbeat:Connect(function() end))
-    end)
-
-    RunService.Heartbeat:Connect(function()
+    table.insert(allConnections, RunService.Heartbeat:Connect(function()
         if hiding then
             local char = LocalPlayer.Character
             if char then char:PivotTo(CFrame.new(hidePos + Vector3.new(0, 3, 0))) end
         end
-    end)
+    end))
 
     local animOverrideActive = false
     local animOverrideLoop = nil
@@ -1300,437 +1131,448 @@ function main(allowedUsername, slotNumber)
                 animOverrideLoop = RunService.Heartbeat:Connect(function()
                     pcall(function()
                         local char = LocalPlayer.Character
-                        if char then
-                            local hum = char:FindFirstChildOfClass("Humanoid")
-                            if hum then
-                                local anim = hum:FindFirstChildOfClass("Animator")
-                                if anim then
-                                    for _, track in ipairs(anim:GetPlayingAnimationTracks()) do
-                                        track:AdjustSpeed(0)
-                                    end
-                                    anim.Parent = nil
-                                end
-                            end
+                        local hum = char and char:FindFirstChildOfClass("Humanoid")
+                        local anim = hum and hum:FindFirstChildOfClass("Animator")
+                        if anim then
+                            for _, track in ipairs(anim:GetPlayingAnimationTracks()) do track:AdjustSpeed(0) end
+                            anim.Parent = nil
                         end
                     end)
                 end)
+                table.insert(allConnections, animOverrideLoop)
             end
         else
-            if animOverrideLoop then
-                animOverrideLoop:Disconnect()
-                animOverrideLoop = nil
-            end
+            if animOverrideLoop then animOverrideLoop:Disconnect(); animOverrideLoop = nil end
             pcall(function()
                 local char = LocalPlayer.Character
-                if char then
-                    local hum = char:FindFirstChildOfClass("Humanoid")
-                    if hum then
-                        local orphan = char:FindFirstChildOfClass("Animator") or game:FindFirstChildOfClass("Animator")
-                        if orphan then
-                            orphan.Parent = hum
-                            for _, track in ipairs(orphan:GetPlayingAnimationTracks()) do
-                                track:AdjustSpeed(1)
-                            end
-                        end
+                local hum = char and char:FindFirstChildOfClass("Humanoid")
+                if hum then
+                    local orphan = char:FindFirstChildOfClass("Animator") or game:FindFirstChildOfClass("Animator")
+                    if orphan then
+                        orphan.Parent = hum
+                        for _, track in ipairs(orphan:GetPlayingAnimationTracks()) do track:AdjustSpeed(1) end
                     end
                 end
             end)
         end
     end
 
-    local allCommands = ".say .loopsay .stoploop .dall .adall .stopadall .silent .fling .stopfling .hide .stophide .reset .rejoin .antiafk .crash .form .stopform .line .circle .orbit .lineup .star .stopmove .mod .removemod .alert .credits .cmds .bots .botscheck .mb .raidcalc .unload .shutdown .orbitspeed .raid .prefix .antilag .equip .animations .msgcmds .msgcheck .msg .wall .tower .dlh .follow .tp"
+    ------------------------------------------------------------------
+    -- Commands
+    ------------------------------------------------------------------
+    local allCommands = ".say .loopsay .stoploop .dall .adall .stopadall .silent .hide .stophide .reset .rejoin .antiafk .form .stopform .line .circle .orbit .lineup .star .stopmove .mod .removemod .alert .credits .cmds .bots .botscheck .mb .raidcalc .unload .shutdown .orbitspeed .raid .prefix .antilag .equip .animations .msgcmds .msgcheck .msg .wall .tower .dlh .follow .tp .blacklist .unblacklist .whitelist .paint .anticrash .sign"
+
+    ------------------------------------------------------------------
+    -- Paint (client-side recolor of YOUR blocks)
+    ------------------------------------------------------------------
+    local PAINT_COLORS = {
+        Color3.fromRGB(255, 0, 0),     -- red
+        Color3.fromRGB(255, 140, 0),   -- orange
+        Color3.fromRGB(255, 235, 0),   -- yellow
+        Color3.fromRGB(0, 200, 60),    -- green
+        Color3.fromRGB(0, 120, 255),   -- blue
+        Color3.fromRGB(130, 0, 200),   -- purple
+        Color3.fromRGB(255, 105, 180), -- pink
+        Color3.fromRGB(101, 67, 33),   -- brown
+        Color3.fromRGB(148, 0, 211),   -- violet
+        Color3.fromRGB(0, 220, 220),   -- cyan
+        Color3.fromRGB(255, 0, 255),   -- magenta
+    }
+
+    local function isMyBlock(part)
+        if not part:IsA("BasePart") then return false end
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Character and part:IsDescendantOf(plr.Character) then return false end
+        end
+        local me, myId = LocalPlayer.Name, LocalPlayer.UserId
+        for _, attr in ipairs({"Owner", "Creator", "Builder"}) do
+            local a = part:GetAttribute(attr)
+            if a and (a == me or a == myId) then return true end
+        end
+        local node = part
+        while node and node ~= workspace do
+            for _, key in ipairs({"Owner", "Creator", "Builder"}) do
+                local v = node:FindFirstChild(key)
+                if v and (v:IsA("StringValue") or v:IsA("ObjectValue") or v:IsA("IntValue")) then
+                    local val = v.Value
+                    if val == me or val == LocalPlayer or val == myId then return true end
+                end
+            end
+            if node.Name == me then return true end
+            node = node.Parent
+        end
+        return false
+    end
+
+    local function paintMyBlocks()
+        local count = 0
+        for _, obj in ipairs(workspace:GetDescendants()) do
+            if isMyBlock(obj) then
+                obj.Color = PAINT_COLORS[math.random(1, #PAINT_COLORS)]
+                count += 1
+            end
+        end
+        return count
+    end
+
+    ------------------------------------------------------------------
+    -- Anti crash (removes spawned clones)
+    ------------------------------------------------------------------
+    local antiCrashOn = true
+
+    local function removeClone(obj)
+        if not antiCrashOn or not obj or not obj.Parent then return end
+        if not string.find(string.lower(obj.Name), "clone", 1, true) then return end
+        for _, plr in ipairs(Players:GetPlayers()) do
+            if plr.Character and (plr.Character == obj or obj:IsDescendantOf(plr.Character)) then return end
+        end
+        pcall(function() obj:Destroy() end)
+    end
+
+    task.spawn(function()
+        for _, obj in ipairs(workspace:GetDescendants()) do removeClone(obj) end
+    end)
+    table.insert(allConnections, workspace.DescendantAdded:Connect(removeClone))
+
+    ------------------------------------------------------------------
+    -- Sign (each bot says one letter's decal ID)
+    ------------------------------------------------------------------
+    local function getSignIndex()
+        local roster = {}
+        for _, plr in ipairs(Players:GetPlayers()) do
+            for _, n in ipairs(BOT_NAMES) do
+                if plr.Name == n then table.insert(roster, plr) break end
+            end
+        end
+        table.sort(roster, function(a, b) return a.UserId > b.UserId end)
+        for i, plr in ipairs(roster) do
+            if plr == LocalPlayer then return i end
+        end
+        return slotNumber
+    end
+
+    local formNames = {line = true, circle = true, lineup = true, star = true, wall = true, tower = true, dlh = true}
+    local announceForms = {wall = true, tower = true, dlh = true}
+
+    local function handleFormation(sender, formType, argsText, announce)
+        local follow, inplace, tgtText = false, false, nil
+        for w in argsText:gmatch("%S+") do
+            local l = w:lower()
+            if l == "follow" then follow = true
+            elseif l == Inplace then inplace = true
+            else tgtText = w end
+        end
+        local tgt = getTarget(tgtText or sender.Name)
+        if tgt then
+            startFormation(tgt, formType, follow, inplace)
+            if announce and messageToggles.formation then
+                sendChat("formation:" .. formType .. " (" .. (tgtText or tgt.Name) .. ")")
+            end
+        end
+    end
 
     local function processCommand(sender, message)
+        if not sender or not message then return end
+        if blacklist[sender.UserId] then return end -- blacklisted users can't use the script
+
         local clean = message:lower():gsub("^%s+", ""):gsub("%s+$", "")
-
-        if string.sub(clean, 1, #Prefix) ~= Prefix and string.sub(clean, 1, 1) ~= ";" then
-            return
-        end
-
-        if string.sub(clean, 1, 1) == ";" then
-            clean = Prefix .. clean:sub(2)
-        end
-
+        if string.sub(clean, 1, 6) == "!sign " then clean = Prefix .. clean:sub(2) end -- !sign alias
+        if string.sub(clean, 1, #Prefix) ~= Prefix and string.sub(clean, 1, 1) ~= ";" then return end
+        if string.sub(clean, 1, 1) == ";" then clean = Prefix .. clean:sub(2) end
         if not isAllowed(sender) then return end
 
-        local cmd = clean
+        -- de-dupe (chat events can fire through several hooks)
+        local key = sender.UserId .. ":" .. message
+        local now = os.clock()
+        local last = _G.KokuwareLast
+        if last[key] and now - last[key] < 0.5 then return end
+        last[key] = now
 
-        if cmd == Prefix .. Shutdown then
-            if isOwner(sender) then
-                pcall(function() LocalPlayer:Kick("Shutdown by owner") end)
-            end
-            return
-        end
+        local name = clean:sub(#Prefix + 1):match("^(%S+)")
+        if not name then return end
+        local rawArgs = message:match("^%s*%S+%s*(.-)%s*$") or ""
+        local lowerArgs = rawArgs:lower()
 
-        if cmd == Prefix .. Unload then
+        if name == "shutdown" then
+            if isOwner(sender) then pcall(function() LocalPlayer:Kick("Shutdown by owner") end) end
+
+        elseif name == "unload" then
             _G.KokuwareUnloaded = true
             cleanupConnections()
+            stopAllMovement()
             if noclipConnection then noclipConnection:Disconnect(); noclipConnection = nil end
             if antiLagLoop then antiLagLoop:Disconnect(); antiLagLoop = nil end
             logGui:Destroy()
             sendChat("Unloaded")
-            return
-        end
 
-        if cmd == Prefix .. AntiLag .. " off" then
-            disableAntiLag()
-            if messageToggles.antilag then sendChat("Anti-lag off") end
-        elseif cmd == Prefix .. AntiLag then
-            applyAntiLag()
-            if messageToggles.antilag then sendChat("Anti-lag on") end
-        elseif cmd == Prefix .. AntiAfk then
-            loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-ANTI-AFK-by-gun-265109"))()
-            if messageToggles.antiafk then sendChat("Anti-afk on") end
-        elseif cmd == Prefix .. AntiAfk .. " off" then
-            sendChat("Anti AFK off not supported")
-        elseif cmd == Prefix .. Crash then crashSequence()
-        elseif cmd == Prefix .. Silent then silentMode = not silentMode
-        elseif cmd == Prefix .. Rejoin then
+        elseif name == "blacklist" then
+            if not isOwner(sender) then return end
+            if rawArgs == "" then sendChat("Usage: .blacklist <user>") return end
+            local uid, uname = resolveUser(rawArgs)
+            if not uid then sendChat("User not found") return end
+            if isOwnerName(uname) then sendChat("Can't blacklist an owner") return end
+            blacklist[uid] = true
+            ModUsers[string.lower(uname)] = nil
+            saveBlacklist()
+            punished[uid] = nil
+            sendChat("Blacklisted " .. uname)
+            logToDiscord("Player blacklisted", {
+                {name = "Target", value = uname .. " (" .. uid .. ")", inline = true},
+                {name = "By", value = sender.Name, inline = true},
+            }, 15158332)
+            addLogEntry("[Blacklist] added " .. uname .. " (" .. uid .. ")", WHITE)
+            local plr = Players:GetPlayerByUserId(uid)
+            if plr then task.spawn(punish, plr) end
+
+        elseif name == "unblacklist" then
+            if not isOwner(sender) then return end
+            if rawArgs == "" then sendChat("Usage: .unblacklist <user>") return end
+            local uid, uname = resolveUser(rawArgs)
+            if uid and blacklist[uid] then
+                blacklist[uid] = nil
+                punished[uid] = nil
+                saveBlacklist()
+                sendChat("Removed " .. uname .. " from blacklist")
+            else
+                sendChat("That user isn't blacklisted")
+            end
+
+        elseif name == "whitelist" then
+            if not isOwner(sender) then return end
+            if rawArgs == "" then sendChat("Usage: .whitelist <user>") return end
+            local uid, uname = resolveUser(rawArgs)
+            if not uid then sendChat("User not found") return end
+            blacklist[uid] = nil
+            punished[uid] = nil
+            saveBlacklist()
+            sendChat(uname .. " has been whitelisted.")
+            sendChat(";Enlighten " .. uname)
+            logToDiscord("Player whitelisted", {
+                {name = "Target", value = uname .. " (" .. uid .. ")", inline = true},
+                {name = "By", value = sender.Name, inline = true},
+            }, 3066993)
+
+        elseif name == "sign" then
+            local word = lowerArgs:gsub("%s+", "")
+            if word == "" then sendChat("Usage: .sign <word>") return end
+            local letter = word:sub(getSignIndex(), getSignIndex())
+            local decal = LETTER_DECALS[letter]
+            sendChat(decal and tostring(decal) or ".")
+
+        elseif name == "paint" then
+            if lowerArgs ~= "all" then sendChat("Usage: .paint all") return end
+            sendChat("Painted " .. paintMyBlocks() .. " blocks")
+
+        elseif name == "anticrash" then
+            if lowerArgs == "off" then
+                antiCrashOn = false
+                sendChat("Anti crash off")
+            else
+                antiCrashOn = true
+                sendChat("Anti crash on")
+            end
+
+        elseif name == "antilag" then
+            if lowerArgs == "off" then
+                disableAntiLag()
+                if messageToggles.antilag then sendChat("Anti-lag off") end
+            else
+                applyAntiLag()
+                if messageToggles.antilag then sendChat("Anti-lag on") end
+            end
+
+        elseif name == "antiafk" then
+            if lowerArgs == "off" then
+                sendChat("Anti AFK off not supported")
+            else
+                pcall(function() loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-ANTI-AFK-by-gun-265109"))() end)
+                if messageToggles.antiafk then sendChat("Anti-afk on") end
+            end
+
+        elseif name == "silent" then silentMode = not silentMode
+
+        elseif name == "rejoin" then
             pcall(function() TeleportService:Teleport(game.PlaceId, LocalPlayer) end)
-        elseif cmd == Prefix .. Reset then
+
+        elseif name == "reset" then
             loopActive = false; loopMsg = ""; adallActive = false
-            flinging = false; flingTarget = ""
             stopAllMovement()
             restoreMap()
-            if hiding then hiding = false; if hidePart then hidePart:Destroy(); hidePart = nil end end
+            if hiding then hiding = false; if hidePartObj then hidePartObj:Destroy(); hidePartObj = nil end end
             local char = LocalPlayer.Character
-            if char then
-                local hum = char:FindFirstChildOfClass("Humanoid")
-                if hum then
-                    local brick = Instance.new("Part")
-                    brick.Size = Vector3.new(5,5,5)
-                    brick.Position = char:GetPivot().Position + Vector3.new(0,3,0)
-                    brick.Anchored = true
-                    brick.Parent = workspace
-                    brick.Touched:Connect(function(hit)
-                        if hit.Parent == char then
-                            hum.Health = 0
-                        end
-                    end)
-                    task.delay(3, function()
-                        if hum and hum.Parent then
-                            hum.Health = 0
-                        end
-                    end)
-                    hum.Died:Wait()
-                    brick:Destroy()
-                end
-            end
-        elseif cmd == Prefix .. Hide then
+            local hum = char and char:FindFirstChildOfClass("Humanoid")
+            if hum then hum.Health = 0 end
+
+        elseif name == "hide" then
             if not hiding then
                 local char = LocalPlayer.Character
                 if char then returnPos = char:GetPivot(); char:PivotTo(CFrame.new(hidePos + Vector3.new(0, 3, 0))) end
-                hidePart = Instance.new("Part")
-                hidePart.Size = Vector3.new(20, 1, 20)
-                hidePart.Position = hidePos
-                hidePart.Anchored = true
-                hidePart.Parent = workspace
+                hidePartObj = Instance.new("Part")
+                hidePartObj.Size = Vector3.new(20, 1, 20)
+                hidePartObj.Position = hidePos
+                hidePartObj.Anchored = true
+                hidePartObj.Parent = workspace
                 hiding = true
             end
-        elseif cmd == Prefix .. StopHide then
+
+        elseif name == "stophide" then
             if hiding then
                 hiding = false
-                if hidePart then hidePart:Destroy(); hidePart = nil end
+                if hidePartObj then hidePartObj:Destroy(); hidePartObj = nil end
                 local char = LocalPlayer.Character
                 if char and returnPos then char:PivotTo(returnPos) end
             end
-        elseif cmd == Prefix .. StopFling then
-            flinging = false
-            flingTarget = ""
-            local bv = LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("BodyVelocity")
-            if bv then bv.Velocity = Vector3.new(0,0,0); bv:Destroy() end
-        elseif cmd == Prefix .. StopForm or cmd == Prefix .. StopMove then
+
+        elseif name == "stopform" or name == "stopmove" then
             stopAllMovement()
             restoreMap()
-        elseif string.sub(clean, 1, #Prefix + #Form + 1) == Prefix .. Form .. " " then
-            local startPos = string.find(message, Form .. " ")
-            local argsText = string.sub(message, startPos + #Form + 1)
-            local args = {}
-            for arg in argsText:gmatch("%S+") do table.insert(args, arg) end
-            if #args >= 1 then
-                local formType = args[1]:lower()
-                local follow = false
-                local inplace = false
-                local tgtText = nil
-                for i = 2, #args do
-                    local lower = args[i]:lower()
-                    if lower == "follow" then
-                        follow = true
-                    elseif lower == Inplace then
-                        inplace = true
-                    else
-                        tgtText = args[i]
-                    end
-                end
-                local tgt = getTarget(tgtText or sender.Name)
-                if tgt then
-                    if formType == "line" or formType == "circle" or formType == "lineup" or formType == "star" or formType == "wall" or formType == "tower" or formType == "dlh" then
-                        startFormation(tgt, formType, follow, inplace)
-                        if messageToggles.formation then
-                            sendChat("formation:" .. formType .. " (" .. (tgtText or tgt.Name) .. ")")
-                        end
-                    end
-                end
+
+        elseif name == "form" then
+            local first, rest = rawArgs:match("^(%S+)%s*(.*)$")
+            if first and formNames[first:lower()] then
+                handleFormation(sender, first:lower(), rest, true)
+            elseif not first then
+                startFormation(sender, "line", false, false)
             end
-        elseif cmd == Prefix .. Form then
-            startFormation(sender, "line", false, false)
-        elseif string.sub(clean, 1, #Prefix + #Wall + 1) == Prefix .. Wall .. " " then
-            local argsText = string.sub(message, string.find(message, Wall .. " ") + #Wall + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local inplace = string.find(argsText:lower(), Inplace) ~= nil
-            argsText = argsText:gsub(Inplace, ""):gsub("^%s+", ""):gsub("%s+$", "")
-            local tgt = getTarget(argsText or sender.Name)
-            if tgt then
-                startFormation(tgt, "wall", false, inplace)
-                if messageToggles.formation then sendChat("formation:wall (" .. (argsText or tgt.Name) .. ")") end
-            end
-        elseif cmd == Prefix .. Wall then
-            startFormation(sender, "wall", false, false)
-            if messageToggles.formation then sendChat("formation:wall (" .. sender.Name .. ")") end
-        elseif string.sub(clean, 1, #Prefix + #Tower + 1) == Prefix .. Tower .. " " then
-            local argsText = string.sub(message, string.find(message, Tower .. " ") + #Tower + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local inplace = string.find(argsText:lower(), Inplace) ~= nil
-            argsText = argsText:gsub(Inplace, ""):gsub("^%s+", ""):gsub("%s+$", "")
-            local tgt = getTarget(argsText or sender.Name)
-            if tgt then
-                startFormation(tgt, "tower", false, inplace)
-                if messageToggles.formation then sendChat("formation:tower (" .. (argsText or tgt.Name) .. ")") end
-            end
-        elseif cmd == Prefix .. Tower then
-            startFormation(sender, "tower", false, false)
-            if messageToggles.formation then sendChat("formation:tower (" .. sender.Name .. ")") end
-        elseif string.sub(clean, 1, #Prefix + #Dlh + 1) == Prefix .. Dlh .. " " then
-            local argsText = string.sub(message, string.find(message, Dlh .. " ") + #Dlh + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local inplace = string.find(argsText:lower(), Inplace) ~= nil
-            argsText = argsText:gsub(Inplace, ""):gsub("^%s+", ""):gsub("%s+$", "")
-            local tgt = getTarget(argsText or sender.Name)
-            if tgt then
-                startFormation(tgt, "dlh", false, inplace)
-                if messageToggles.formation then sendChat("formation:dlh (" .. (argsText or tgt.Name) .. ")") end
-            end
-        elseif cmd == Prefix .. Dlh then
-            startFormation(sender, "dlh", false, false)
-            if messageToggles.formation then sendChat("formation:dlh (" .. sender.Name .. ")") end
-        elseif string.sub(clean, 1, #Prefix + #Line + 1) == Prefix .. Line .. " " then
-            local startPos = string.find(message, Line .. " ")
-            local tgtText = string.sub(message, startPos + #Line + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local follow = string.find(tgtText, "follow") ~= nil
-            local inplace = string.find(tgtText:lower(), Inplace) ~= nil
-            tgtText = tgtText:gsub("follow", ""):gsub(Inplace, ""):gsub("%s+$", ""):gsub("^%s+", "")
-            local tgt = getTarget(tgtText or sender.Name)
-            if tgt then startFormation(tgt, "line", follow, inplace) end
-        elseif cmd == Prefix .. Line then startFormation(sender, "line", false, false)
-        elseif string.sub(clean, 1, #Prefix + #Circle + 1) == Prefix .. Circle .. " " then
-            local startPos = string.find(message, Circle .. " ")
-            local tgtText = string.sub(message, startPos + #Circle + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local follow = string.find(tgtText, "follow") ~= nil
-            local inplace = string.find(tgtText:lower(), Inplace) ~= nil
-            tgtText = tgtText:gsub("follow", ""):gsub(Inplace, ""):gsub("%s+$", ""):gsub("^%s+", "")
-            local tgt = getTarget(tgtText or sender.Name)
-            if tgt then startFormation(tgt, "circle", follow, inplace) end
-        elseif cmd == Prefix .. Circle then startFormation(sender, "circle", false, false)
-        elseif string.sub(clean, 1, #Prefix + #Orbit + 1) == Prefix .. Orbit .. " " then
-            local startPos = string.find(message, Orbit .. " ")
-            local tgtText = string.sub(message, startPos + #Orbit + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local inplace = string.find(tgtText:lower(), Inplace) ~= nil
-            tgtText = tgtText:gsub(Inplace, ""):gsub("%s+$", ""):gsub("^%s+", "")
-            local tgt = getTarget(tgtText or sender.Name)
+
+        elseif formNames[name] then
+            handleFormation(sender, name, rawArgs, announceForms[name])
+
+        elseif name == "orbit" then
+            local inplace = string.find(lowerArgs, Inplace) ~= nil
+            local tgtText = rawArgs:gsub(Inplace, ""):gsub("^%s+", ""):gsub("%s+$", "")
+            local tgt = getTarget(tgtText ~= "" and tgtText or sender.Name)
             if tgt then startOrbit(tgt, inplace) end
-        elseif cmd == Prefix .. Orbit then startOrbit(sender, false)
-        elseif string.sub(clean, 1, #Prefix + #Lineup + 1) == Prefix .. Lineup .. " " then
-            local startPos = string.find(message, Lineup .. " ")
-            local tgtText = string.sub(message, startPos + #Lineup + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local follow = string.find(tgtText, "follow") ~= nil
-            local inplace = string.find(tgtText:lower(), Inplace) ~= nil
-            tgtText = tgtText:gsub("follow", ""):gsub(Inplace, ""):gsub("%s+$", ""):gsub("^%s+", "")
-            local tgt = getTarget(tgtText or sender.Name)
-            if tgt then startFormation(tgt, "lineup", follow, inplace) end
-        elseif cmd == Prefix .. Lineup then startFormation(sender, "lineup", false, false)
-        elseif string.sub(clean, 1, #Prefix + #Star + 1) == Prefix .. Star .. " " then
-            local startPos = string.find(message, Star .. " ")
-            local tgtText = string.sub(message, startPos + #Star + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local follow = string.find(tgtText, "follow") ~= nil
-            local inplace = string.find(tgtText:lower(), Inplace) ~= nil
-            tgtText = tgtText:gsub("follow", ""):gsub(Inplace, ""):gsub("%s+$", ""):gsub("^%s+", "")
-            local tgt = getTarget(tgtText or sender.Name)
-            if tgt then startFormation(tgt, "star", follow, inplace) end
-        elseif cmd == Prefix .. Star then startFormation(sender, "star", false, false)
-        elseif string.sub(clean, 1, #Prefix + #Dall + 1) == Prefix .. Dall .. " " then
-            local startPos = string.find(message, Dall .. " ")
-            local targetText = string.sub(message, startPos + #Dall + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local target = getTarget(targetText or sender.Name)
+
+        elseif name == "dall" then
+            local target = (rawArgs ~= "" and getTarget(rawArgs)) or sender
             local t = getOwnTime()
             if t and t.Value > 1 then
                 sendChat(";donate " .. fixUsername(target.Name) .. " " .. (t.Value - 1))
             end
-        elseif cmd == Prefix .. Dall then
-            local t = getOwnTime()
-            if t and t.Value > 1 then
-                sendChat(";donate " .. fixUsername(sender.Name) .. " " .. (t.Value - 1))
-            end
-        elseif string.sub(clean, 1, #Prefix + #Adall + 1) == Prefix .. Adall .. " " then
-            local startPos = string.find(message, Adall .. " ")
-            local argsText = string.sub(message, startPos + #Adall + 1)
-            local args = {}
-            for arg in argsText:gmatch("%S+") do table.insert(args, arg) end
-            local interval = 1
-            local target = sender
-            if #args >= 1 then
-                if tonumber(args[1]) then
-                    interval = tonumber(args[1])
-                    if #args >= 2 then
-                        target = getTarget(args[2]) or sender
-                    end
+
+        elseif name == "adall" then
+            local list = {}
+            for a in rawArgs:gmatch("%S+") do table.insert(list, a) end
+            local interval, target = 1, sender
+            if #list >= 1 then
+                if tonumber(list[1]) then
+                    interval = tonumber(list[1])
+                    if #list >= 2 then target = getTarget(list[2]) or sender end
                 else
-                    target = getTarget(args[1]) or sender
-                    if #args >= 2 and tonumber(args[2]) then
-                        interval = tonumber(args[2])
-                    end
+                    target = getTarget(list[1]) or sender
+                    if #list >= 2 and tonumber(list[2]) then interval = tonumber(list[2]) end
                 end
             end
             adallInterval = interval
             adallTarget = fixUsername(target.Name)
             adallActive = true
-        elseif cmd == Prefix .. Adall then
-            adallInterval = 1
-            adallTarget = fixUsername(sender.Name)
-            adallActive = true
-        elseif cmd == Prefix .. StopAdall then adallActive = false
-        elseif cmd == Prefix .. BotsCheck then
-            sendChat(autoMatchMsg)
-        elseif string.sub(clean, 1, #Prefix + #MB + 1) == Prefix .. MB .. " " then
-            local startPos = string.find(message, MB .. " ")
-            local msg = string.sub(message, startPos + #MB + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            if msg ~= "" then
-                autoMatchMsg = msg
-                sendChat("Auto-match message set to: " .. msg)
+
+        elseif name == "stopadall" then adallActive = false
+        elseif name == "botscheck" then sendChat(autoMatchMsg)
+
+        elseif name == "mb" then
+            if rawArgs ~= "" then
+                autoMatchMsg = rawArgs
+                sendChat("Auto-match message set to: " .. rawArgs)
+            else
+                autoMatchMsg = "°"
+                sendChat("Auto-match message reset to °")
             end
-        elseif cmd == Prefix .. MB then
-            autoMatchMsg = "°"
-            sendChat("Auto-match message reset to °")
-        elseif cmd == Prefix .. RaidCalc then
+
+        elseif name == "raidcalc" then
             local t = getOwnTime()
             local current = t and t.Value or 0
             local target = 1000
             local rate = totalBots + 1
             local needed = math.max(0, target - current)
             local seconds = math.ceil(needed / rate)
-            local mins = math.floor(seconds / 60)
-            local secs = seconds % 60
-            sendChat("RaidCalc: " .. mins .. " minutes and " .. secs .. " seconds to reach " .. target .. " time with " .. totalBots + 1 .. " total players.")
-        elseif string.sub(clean, 1, #Prefix + #Fling + 1) == Prefix .. Fling .. " " then
-            local startPos = string.find(message, Fling .. " ")
-            local targetText = string.sub(message, startPos + #Fling + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local target = getTarget(targetText or sender.Name)
-            if target then flingTarget = target.Name; flinging = true end
-        elseif cmd == Prefix .. Fling then flingTarget = sender.Name; flinging = true
-        elseif string.sub(clean, 1, #Prefix + #Mod + 1) == Prefix .. Mod .. " " then
-            local startPos = string.find(message, Mod .. " ")
-            local targetText = string.sub(message, startPos + #Mod + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local target = getTarget(targetText or sender.Name)
-            if target then ModUsers[string.lower(target.DisplayName)] = true end
-        elseif cmd == Prefix .. Mod then ModUsers[string.lower(sender.DisplayName)] = true
-        elseif string.sub(clean, 1, #Prefix + #RemoveMod + 1) == Prefix .. RemoveMod .. " " then
-            local startPos = string.find(message, RemoveMod .. " ")
-            local targetText = string.sub(message, startPos + #RemoveMod + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            if targetText:lower() == "a" then
+            sendChat("RaidCalc: " .. math.floor(seconds / 60) .. " minutes and " .. (seconds % 60) .. " seconds to reach " .. target .. " time with " .. (totalBots + 1) .. " total players.")
+
+        elseif name == "mod" then
+            local target = (rawArgs ~= "" and getTarget(rawArgs)) or sender
+            if target and not blacklist[target.UserId] then ModUsers[string.lower(target.DisplayName)] = true end
+
+        elseif name == "removemod" then
+            if lowerArgs == "a" then
                 ModUsers = {}
                 sendChat("All mods removed")
             else
-                local target = getTarget(targetText or sender.Name)
+                local target = (rawArgs ~= "" and getTarget(rawArgs)) or sender
                 if target then
-                    local key = string.lower(target.DisplayName)
-                    if ModUsers[key] then ModUsers[key] = nil; sendChat("Removed mod " .. target.DisplayName) else sendChat(target.DisplayName .. " is not a mod") end
+                    local k = string.lower(target.DisplayName)
+                    if ModUsers[k] then ModUsers[k] = nil; sendChat("Removed mod " .. target.DisplayName)
+                    else sendChat(target.DisplayName .. " is not a mod") end
                 end
             end
-        elseif cmd == Prefix .. RemoveMod then
-            ModUsers[string.lower(sender.DisplayName)] = nil
-        elseif string.sub(clean, 1, #Prefix + #Bots + 1) == Prefix .. Bots .. " " then
-            local startPos = string.find(message, Bots .. " ")
-            local num = tonumber(string.sub(message, startPos + #Bots + 1))
-            if num and num > 0 then
-                totalBots = num
-            end
-        elseif string.sub(clean, 1, #Prefix + #Say + 1) == Prefix .. Say .. " " then
-            local startPos = string.find(message, Say .. " ")
-            local text = string.sub(message, startPos + #Say + 1)
-            if text ~= "" then sendChat(text) end
-        elseif string.sub(clean, 1, #Prefix + #Loop + 1) == Prefix .. Loop .. " " then
-            local startPos = string.find(message, Loop .. " ")
-            local text = string.sub(message, startPos + #Loop + 1)
-            if text ~= "" then loopMsg = text; loopActive = true end
-        elseif cmd == Prefix .. StopLoop then loopActive = false; loopMsg = ""; adallActive = false
-        elseif string.sub(clean, 1, #Prefix + #Alert + 1) == Prefix .. Alert .. " " then
-            local startPos = string.find(message, Alert .. " ")
-            local text = string.sub(message, startPos + #Alert + 1)
-            if text ~= "" then sendAlert(text) end
-        elseif cmd == Prefix .. Alert then sendAlert("Alert! " .. sender.DisplayName .. " requests your attention!")
-        elseif cmd == Prefix .. Credits then
+
+        elseif name == "bots" then
+            local num = tonumber(rawArgs)
+            if num and num > 0 then totalBots = num end
+
+        elseif name == "say" then
+            if rawArgs ~= "" then sendChat(rawArgs) end
+
+        elseif name == "loopsay" then
+            if rawArgs ~= "" then loopMsg = rawArgs; loopActive = true end
+
+        elseif name == "stoploop" then loopActive = false; loopMsg = ""; adallActive = false
+
+        elseif name == "alert" then
+            if rawArgs ~= "" then sendAlert(rawArgs) else sendAlert("Alert! " .. sender.DisplayName .. " requests your attention!") end
+
+        elseif name == "credits" then
             local creditLines = {
-                "Kokuware - Credits to Kokushibo and Echo -",
-                "thanks echo :) #echo is tuff",
-                "Script features powered by Echo's framework structure.",
-                "Original system design & formatting credited to Echo.",
-                "Enjoy using Kokuware & Echoware!"
+                "Kokuware - Credits to " .. CREDITS,
+                "Enjoy using Kokuware!"
             }
-            for _, line in ipairs(creditLines) do
-                sendChat(line)
-                task.wait(0.3)
-            end
-        elseif cmd == Prefix .. Cmds then
+            for _, line in ipairs(creditLines) do sendChat(line) task.wait(0.3) end
+
+        elseif name == "cmds" then
             local cmds = allCommands:split(" ")
-            local half = math.ceil(#cmds / 2)
-            sendChat(table.concat(cmds, " ", 1, half))
-            task.wait(0.5)
-            sendChat(table.concat(cmds, " ", half+1, #cmds))
-        elseif string.sub(clean, 1, #Prefix + #OrbitSpeed + 1) == Prefix .. OrbitSpeed .. " " then
-            local startPos = string.find(message, OrbitSpeed .. " ")
-            local num = tonumber(string.sub(message, startPos + #OrbitSpeed + 1))
-            if num and num > 0 then
-                orbitSpeed = num
-                if messageToggles.orbitspeed then sendChat("orbitspeed set to (" .. num .. ")") end
+            local chunk = ""
+            for _, c in ipairs(cmds) do
+                local nextChunk = (chunk == "") and c or (chunk .. " | " .. c)
+                if #nextChunk > 190 then
+                    sendChat(chunk)
+                    task.wait(0.5)
+                    chunk = c
+                else
+                    chunk = nextChunk
+                end
             end
-        elseif cmd == Prefix .. OrbitSpeed then
+            if chunk ~= "" then sendChat(chunk) end
+
+        elseif name == "orbitspeed" then
+            local num = tonumber(rawArgs)
+            if num and num > 0 then orbitSpeed = num end
             if messageToggles.orbitspeed then sendChat("orbitspeed set to (" .. orbitSpeed .. ")") end
-        elseif cmd == Prefix .. Raid then
+
+        elseif name == "raid" then
             if isOwner(sender) then
-                pcall(function()
-                    loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-ANTI-AFK-by-gun-265109"))()
-                end)
+                pcall(function() loadstring(game:HttpGet("https://rawscripts.net/raw/Universal-Script-ANTI-AFK-by-gun-265109"))() end)
                 adallTarget = fixUsername(sender.Name)
                 adallInterval = 20
                 adallActive = true
             end
-        elseif string.sub(clean, 1, #Prefix + #PrefixCmd + 1) == Prefix .. PrefixCmd .. " " then
-            local startPos = string.find(message, PrefixCmd .. " ")
-            local newPrefix = string.sub(message, startPos + #PrefixCmd + 1)
-            if newPrefix and newPrefix ~= "" then
-                newPrefix = newPrefix:match("^%s*(.-)%s*$")
-                if #newPrefix > 0 then
-                    Prefix = newPrefix
-                end
-            end
-        elseif cmd == Prefix .. MsgCmds then
+
+        elseif name == "prefix" then
+            if rawArgs ~= "" then Prefix = rawArgs end
+
+        elseif name == "msgcmds" then
             sendChat("Usage: .msg <type> on/off | Types: loading, orbitspeed, formation, antiafk, antilag")
-        elseif cmd == Prefix .. MsgCheck then
-            local msgs = {
-                "loading | " .. (messageToggles.loading and "on" or "off"),
-                "orbitspeed | " .. (messageToggles.orbitspeed and "on" or "off"),
-                "formation | " .. (messageToggles.formation and "on" or "off"),
-                "antilag | " .. (messageToggles.antilag and "on" or "off"),
-                "antiafk | " .. (messageToggles.antiafk and "on" or "off")
-            }
-            for _, m in ipairs(msgs) do
-                sendChat(m)
+
+        elseif name == "msgcheck" then
+            for _, k in ipairs({"loading", "orbitspeed", "formation", "antilag", "antiafk"}) do
+                sendChat(k .. " | " .. (messageToggles[k] and "on" or "off"))
                 task.wait(0.2)
             end
-        elseif string.sub(clean, 1, #Prefix + #Msg + 1) == Prefix .. Msg .. " " then
-            local startPos = string.find(message, Msg .. " ")
-            local argsText = string.sub(message, startPos + #Msg + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local args = {}
-            for arg in argsText:gmatch("%S+") do table.insert(args, arg:lower()) end
-            if #args >= 2 then
-                local msgType = args[1]
-                local state = args[2]
+
+        elseif name == "msg" then
+            local list = {}
+            for a in lowerArgs:gmatch("%S+") do table.insert(list, a) end
+            if #list >= 2 then
+                local msgType, state = list[1], list[2]
                 if defaultMessages[msgType] ~= nil then
                     if state == "on" or state == "off" then
                         messageToggles[msgType] = (state == "on")
@@ -1745,13 +1587,14 @@ function main(allowedUsername, slotNumber)
             else
                 sendChat("Usage: .msg <type> on/off")
             end
-        elseif string.sub(clean, 1, #Prefix + #Follow + 1) == Prefix .. Follow .. " " then
-            local argsText = string.sub(message, string.find(message, Follow .. " ") + #Follow + 1):gsub("^%s+", ""):gsub("%s+$", "")
-            local inplace = string.find(argsText:lower(), Inplace) ~= nil
-            argsText = argsText:gsub(Inplace, ""):gsub("^%s+", ""):gsub("%s+$", "")
-            local tgt = getTarget(argsText or sender.Name)
+
+        elseif name == "follow" then
+            stopAllMovement()
+            if rawArgs == "" then return end
+            local inplace = string.find(lowerArgs, Inplace) ~= nil
+            local tgtText = rawArgs:gsub(Inplace, ""):gsub("^%s+", ""):gsub("%s+$", "")
+            local tgt = getTarget(tgtText ~= "" and tgtText or sender.Name)
             if tgt then
-                stopAllMovement()
                 if inplace then createPlatform() return end
                 followConnection = RunService.Heartbeat:Connect(function()
                     local myChar = LocalPlayer.Character
@@ -1761,11 +1604,9 @@ function main(allowedUsername, slotNumber)
                         local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
                         if myRoot and targetRoot then
                             local look = targetRoot.CFrame.LookVector
-                            local right = targetRoot.CFrame.RightVector
                             local randomAngle = math.random(-15, 15)
-                            local offset = (CFrame.lookAt(Vector3.new(0,0,0), look) * CFrame.Angles(0, math.rad(randomAngle), 0)).LookVector
-                            local randomDist = math.random(4, 7)
-                            local pos = targetRoot.Position - offset * randomDist + Vector3.new(0, 0, 0)
+                            local offset = (CFrame.lookAt(Vector3.new(0, 0, 0), look) * CFrame.Angles(0, math.rad(randomAngle), 0)).LookVector
+                            local pos = targetRoot.Position - offset * math.random(4, 7)
                             myRoot.CFrame = CFrame.lookAt(pos, targetRoot.Position)
                             disableAnimations()
                         end
@@ -1773,68 +1614,44 @@ function main(allowedUsername, slotNumber)
                 end)
                 table.insert(allConnections, followConnection)
             end
-        elseif cmd == Prefix .. Follow then
-            stopAllMovement()
-        elseif string.sub(clean, 1, #Prefix + #Tp + 1) == Prefix .. Tp .. " " then
+
+        elseif name == "tp" then
             if isOwner(sender) or ModUsers[string.lower(sender.DisplayName)] then
-                local tgtText = string.sub(message, string.find(message, Tp .. " ") + #Tp + 1):gsub("^%s+", ""):gsub("%s+$", "")
-                local tgt = getTarget(tgtText or sender.Name)
-                if tgt then
-                    local myChar = LocalPlayer.Character
-                    local targetChar = tgt.Character
-                    if myChar and targetChar then
-                        local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-                        local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-                        if myRoot and targetRoot then
-                            myRoot.CFrame = targetRoot.CFrame
-                        end
-                    end
-                end
+                local tgt = (rawArgs ~= "" and getTarget(rawArgs)) or sender
+                local myRoot = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                local targetRoot = tgt and tgt.Character and tgt.Character:FindFirstChild("HumanoidRootPart")
+                if myRoot and targetRoot then myRoot.CFrame = targetRoot.CFrame end
             end
-        elseif cmd == Prefix .. Tp then
-            if isOwner(sender) or ModUsers[string.lower(sender.DisplayName)] then
-                local myChar = LocalPlayer.Character
-                local targetChar = sender.Character
-                if myChar and targetChar then
-                    local myRoot = myChar:FindFirstChild("HumanoidRootPart")
-                    local targetRoot = targetChar:FindFirstChild("HumanoidRootPart")
-                    if myRoot and targetRoot then
-                        myRoot.CFrame = targetRoot.CFrame
-                    end
-                end
-            end
-        elseif cmd == Prefix .. Equip then
-            sendChat("Usage: .equip <item>")
-        elseif cmd == Prefix .. Animations then
+
+        elseif name == "equip" then
+            if rawArgs == "" then sendChat("Usage: .equip <item>") else equipTool(rawArgs) end
+
+        elseif name == "animations" then
             setAnimationOverride(not animOverrideActive)
         end
     end
 
     local function hookPlayer(p)
-        if p.Chatted then
-            local conn = p.Chatted:Connect(function(m) processCommand(p, m) end)
-            table.insert(allConnections, conn)
-        end
+        table.insert(allConnections, p.Chatted:Connect(function(m) processCommand(p, m) end))
     end
 
     for _, p in ipairs(Players:GetPlayers()) do hookPlayer(p) end
-    Players.PlayerAdded:Connect(function(plr)
-        local conn = plr.Chatted:Connect(function(m) processCommand(plr, m) end)
-        table.insert(allConnections, conn)
-    end)
+    table.insert(allConnections, Players.PlayerAdded:Connect(hookPlayer))
 
     if TextChatService then
-        local conn = TextChatService.MessageReceived:Connect(function(m)
-            local sender = Players:GetPlayerByUserId(m.UserId)
+        table.insert(allConnections, TextChatService.MessageReceived:Connect(function(m)
+            local sender = m.TextSource and Players:GetPlayerByUserId(m.TextSource.UserId)
             if sender then processCommand(sender, m.Text) end
-        end)
-        table.insert(allConnections, conn)
+        end))
     end
 
     slotBox.Text = tostring(slotNumber)
-    addLogEntry("Bot started with owner: " .. (hasOwner and ownerName or "anyone") .. " | Slot: " .. slotNumber, Color3.fromRGB(0,255,0))
+    addLogEntry("Bot started with owner: " .. (hasOwner and ownerName or "anyone") .. " | Slot: " .. slotNumber, WHITE)
 end
 
+----------------------------------------------------------------------
+-- Log GUI buttons / setup flow
+----------------------------------------------------------------------
 setSlotBtn.MouseButton1Click:Connect(function()
     local num = tonumber(slotBox.Text)
     if num and num >= 1 and num <= 99 then
@@ -1874,18 +1691,14 @@ local function performSetup()
     end
 
     if not isLicenseValid() then
-        showKeyPrompt(function()
-            performSetup()
-        end)
+        showKeyPrompt(performSetup)
         return
     end
 
     local agreed = false
-    pcall(function() local content = readfile(AGREEMENT_FILE) if content then agreed = true end end)
+    pcall(function() if readfile(AGREEMENT_FILE) then agreed = true end end)
     if not agreed then
-        showTermsPrompt(function()
-            performSetup()
-        end)
+        showTermsPrompt(performSetup)
         return
     end
 
@@ -1900,6 +1713,21 @@ local function performSetup()
     end
 end
 
+task.spawn(function()
+    while not _G.KokuwareUnloaded do
+        task.wait(120)
+        local tampered = not integrityOK()
+        if tampered then selfDestruct("Script was modified (periodic check)") end
+        if tampered or isRemotelyBlacklisted() then
+            if not tampered then logToDiscord("Blacklisted user was shut off", {}, 15158332) end
+            _G.KokuwareUnloaded = true
+            cleanupConnections()
+            if noclipConnection then noclipConnection:Disconnect(); noclipConnection = nil end
+            if antiLagLoop then antiLagLoop:Disconnect(); antiLagLoop = nil end
+            logGui:Destroy()
+            break
+        end
+    end
+end)
+
 performSetup()
-
-
