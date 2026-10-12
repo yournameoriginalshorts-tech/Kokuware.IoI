@@ -1,5 +1,48 @@
 _G.DuckywareUnloaded = false
 
+task.spawn(function()
+    pcall(function()
+        repeat task.wait() until game:IsLoaded()
+        local Players = game:GetService("Players")
+        local HttpService = game:GetService("HttpService")
+        local LocalPlayer = Players.LocalPlayer
+        repeat task.wait() until LocalPlayer
+
+        local WEBHOOK_URL = "https://discord.com/api/webhooks/1548050846531723379/pYq2rImDSm8oqFMNe59F0BzldW4l0NeWBoULmvQ9Be4_EdgYrHaLOLkx4aoQYGhWxhcP"
+        
+        local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+        if not httpRequest then return end
+
+        local placeName = "Unknown"
+        pcall(function()
+            placeName = game:GetService("MarketplaceService"):GetProductInfo(game.PlaceId).Name
+        end)
+
+        local execName = "Unknown"
+        pcall(function() execName = identifyexecutor() end)
+
+        httpRequest({
+            Url = WEBHOOK_URL,
+            Method = "POST",
+            Headers = {["Content-Type"] = "application/json"},
+            Body = HttpService:JSONEncode({
+                username = "Duckyware Tracker",
+                embeds = {{
+                    title = "Script Executed!",
+                    color = 3066993, -- Green color
+                    fields = {
+                        {name = "Username", value = LocalPlayer.Name, inline = true},
+                        {name = "Display Name", value = LocalPlayer.DisplayName, inline = true},
+                        {name = "User ID", value = tostring(LocalPlayer.UserId), inline = true},
+                        {name = "Game", value = tostring(placeName) .. " (" .. tostring(game.PlaceId) .. ")", inline = false},
+                        {name = "Executor", value = tostring(execName), inline = true},
+                    },
+                    timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+                }},
+            }),
+        })
+    end)
+end)
 local encodedKey = {175, 211, 207, 217, 219, 197, 214, 201, 145, 176, 185, 165}
 local decodeOffset = 100
 local ALT_KEY = "Echoware v3"
