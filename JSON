@@ -1,9 +1,3 @@
-local WEBHOOK_URL = "https://discord.com/api/webhooks/1548050846531723379/pYq2rImDSm8oqFMNe59F0BzldW4l0NeWBoULmvQ9Be4_EdgYrHaLOLkx4aoQYGhWxhcP"       -- Discord webhook for the execution log (optional)
-local SCRIPT_URL  = "https://raw.githubusercontent.com/yournameoriginalshorts-tech/Kokuware.IoI/main/Duckyware-LUA"        -- your loadstring link, re-queued after teleports
--- Discord-controlled whitelist/blacklist: host a JSON file that your Discord bot/worker updates, e.g.
---   {"mode":"open","whitelist":["name",123456],"blacklist":["name",789]}
--- "open"      = everyone may run the script except blacklisted users
--- "whitelist" = only whitelisted users may run the script
-local ACCESS_URL  = "https://raw.githubusercontent.com/yournameoriginalshorts-tech/Kokuware.IoI/main/access.json"
-local ACCESS_REFRESH = 60
-
+{
+  "blacklist": ["BadPlayer", 987654321]
+}
