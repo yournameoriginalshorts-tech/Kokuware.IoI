@@ -5575,3 +5575,141 @@ end, function(e)
     pcall(notify, "Kokuware Hub error", tostring(e):sub(1, 180), 20)
     return e
 end)
+-- KOKUWARE PAINT FIX
+-- Paste this at the VERY BOTTOM of your script (after the last "end, function(e) ... end)").
+-- After Advanced AutoBuild finishes placing blocks, it now flies to every block that is still the wrong
+-- colour/material and paints it (retrying, up to 3 rounds), so builds no longer stay plain gray.
+pcall(function()
+    local E, AB = K.Build, K.AdvBuild
+    if not (E and AB) or AB._paintFixed then return end
+    AB._paintFixed = true
+
+    local Players    = game:GetService("Players")
+    local RunService = game:GetService("RunService")
+    local LP = Players.LocalPlayer
+
+    local PAINT_NAMES = {
+        [Enum.Material.SmoothPlastic]="smooth", [Enum.Material.Plastic]="plastic",
+        [Enum.Material.CeramicTiles]="tiles",   [Enum.Material.Brick]="bricks",
+        [Enum.Material.WoodPlanks]="planks",    [Enum.Material.Ice]="ice",
+        [Enum.Material.Grass]="grass",          [Enum.Material.Sand]="sand",
+        [Enum.Material.Snow]="snow",            [Enum.Material.Glass]="glass",
+        [Enum.Material.Wood]="wood",            [Enum.Material.Slate]="stone",
+        [Enum.Material.Pebble]="pebble",        [Enum.Material.Marble]="marble",
+        [Enum.Material.Granite]="granite",      [Enum.Material.DiamondPlate]="steel",
+        [Enum.Material.Metal]="metal",          [Enum.Material.Asphalt]="asphalt",
+        [Enum.Material.Concrete]="concrete",    [Enum.Material.Pavement]="pavement",
+        [Enum.Material.Neon]="neon",
+    }
+
+    local function key(p)
+        return math.floor(p.X * 2 + 0.5) .. "," .. math.floor(p.Y * 2 + 0.5) .. "," .. math.floor(p.Z * 2 + 0.5)
+    end
+    local function close(a, b)
+        return math.abs(a.R - b.R) < 0.008 and math.abs(a.G - b.G) < 0.008 and math.abs(a.B - b.B) < 0.008
+    end
+    local function getHRP()
+        local c = LP.Character
+        return c and c:FindFirstChild("HumanoidRootPart")
+    end
+
+    local lockConn, noclipConn
+    local function lock(pos)
+        if lockConn then lockConn:Disconnect() end
+        lockConn = RunService.Heartbeat:Connect(function()
+            local h = getHRP()
+            if h then
+                h.CFrame = CFrame.new(pos)
+                h.AssemblyLinearVelocity = Vector3.zero
+                h.AssemblyAngularVelocity = Vector3.zero
+            end
+        end)
+    end
+    local function unlock()
+        if lockConn then lockConn:Disconnect(); lockConn = nil end
+    end
+    local function noclipOn()
+        if noclipConn then noclipConn:Disconnect() end
+        noclipConn = RunService.Stepped:Connect(function()
+            local c = LP.Character
+            if not c then return end
+            for _, p in ipairs(c:GetChildren()) do
+                if p:IsA("BasePart") then p.CanCollide = false end
+            end
+        end)
+    end
+    local function noclipOff()
+        if noclipConn then noclipConn:Disconnect(); noclipConn = nil end
+    end
+
+    local function paintOne(brick, color, material)
+        local pt = E.findToolByName("Paint")
+        if not pt then return false end
+        local mname = PAINT_NAMES[material] or "smooth"
+        for i = 1, 8 do
+            if not brick.Parent then return false end
+            if close(brick.Color, color) and brick.Material == material then return true end
+            local hrp = getHRP()
+            -- alternate between "from my position" and "on the brick's surface" so one of them is accepted
+            local hit = (i % 2 == 1 and hrp) and hrp.Position or (brick.Position + Vector3.new(0, brick.Size.Y / 2, 0))
+            pcall(function() pt.event:FireServer(brick, Enum.NormalId.Left, hit, "both", color, mname, "") end)
+            task.wait(0.1 + i * 0.03)
+        end
+        return close(brick.Color, color) and brick.Material == material
+    end
+
+    function AB.paintPass(blocks)
+        if not blocks then return end
+        local pt = E.findToolByName("Paint")
+        if not pt then AB.setDetail("Paint tool missing - can't paint"); return end
+        local char = LP.Character
+        if char and pt.tool.Parent ~= char then pcall(function() pt.tool.Parent = char end) end
+
+        local want = {}
+        for _, b in ipairs(blocks) do want[key(b.centerPos)] = b end
+        local bf = workspace:FindFirstChild("Bricks")
+        local pf = bf and bf:FindFirstChild(LP.Name)
+        if not pf then return end
+
+        noclipOn()
+        local left = 0
+        for round = 1, 3 do
+            left = 0
+            local fixed = 0
+            for _, brick in ipairs(pf:GetChildren()) do
+                if AB.stopFlag then break end
+                if brick:IsA("BasePart") and brick.Name == "Brick" then
+                    local b = want[key(brick.Position)]
+                    if b and not (close(brick.Color, b.color) and brick.Material == b.material) then
+                        lock(brick.Position + Vector3.new(0, 8, 0))
+                        task.wait(0.05)
+                        if paintOne(brick, b.color, b.material) then fixed += 1 else left += 1 end
+                        AB.setStatus(string.format("Painting (round %d): %d fixed, %d stubborn", round, fixed, left))
+                    end
+                end
+            end
+            unlock()
+            if AB.stopFlag or left == 0 then break end
+        end
+        unlock(); noclipOff()
+        AB.setDetail(left == 0 and "Paint pass done: everything has the right colour" or (left .. " block(s) wouldn't take paint"))
+    end
+
+    -- run the paint pass after every advanced build; AB.running stays true so the alt loop doesn't start
+    -- another build on top of it
+    local origRun = AB.run
+    AB.run = function(blocks)
+        local ok = origRun(blocks)
+        if ok then
+            task.spawn(function()
+                while AB.running do task.wait(0.1) end
+                if AB.stopFlag then return end
+                AB.running = true
+                pcall(AB.paintPass, blocks)
+                AB.running = false
+                if not AB.stopFlag then AB.setStatus("Built and painted") end
+            end)
+        end
+        return ok
+    end
+end)
