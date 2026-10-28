@@ -5,7 +5,8 @@
 -- !sign now works on any bot in the server, named in BOT_NAMES or not,
 -- as long as you've set !bots <total> so each bot knows its slot.
 -- Host this file on GitHub as KOKUWAREHUB.TXT and run it with:
--- loadstring(game:HttpGet("https://raw.githubusercontent.com/<you>/<repo>/main/KOKUWAREHUB.TXT"))()
+-- loadstring(game:HttpGet("https://raw.githubusercontent.com/yournameoriginalshorts-tech/Kokuware.IoI/main/KokuwareHUB"))()
+
 
 -- Kokuware
 -- Made by Kokushibo
