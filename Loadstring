@@ -26,7 +26,7 @@ local ACCESS_REFRESH = 60
 
 local BOT_NAMES = {"EgorsAssistant3", "EgorsAssistant4", "EgorsAssistant5", "EgorsAssistant6", "EgorsAssistant7", "EgorsAssistant8", "EgorsAssistant9", "EgorsAssistant10", "EgorsAssistant11", "EgorsAssistant12", "HUBBABUBBABUNGUS2", "Spikeymat"}
 
-local PERM_OWNERS = {"iyuurank2", "Ronaldoisthegoat2023", "teebiu", "teebiu_alt"}
+local PERM_OWNERS = {"iyuurank1", "Ronaldoisthegoat2023", "teebiu", "teebiu_alt", "Kupcake3245"}
 local WHITELISTED = {"Spikeymat", "HUBBABUBBABUNGUS2", "EgorsAssistant3", "EgorsAssistant4", "EgorsAssistant5", "EgorsAssistant6", "EgorsAssistant7", "EgorsAssistant8", "EgorsAssistant9", "EgorsAssistant10", "EgorsAssistant11", "EgorsAssistant12"}
 -- permanent bots: EgorsAssistant3 = slot 1, EgorsAssistant4 = slot 2 ... EgorsAssistant12 = slot 10
 K.permSlot = function(name)
