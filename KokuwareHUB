@@ -1401,30 +1401,21 @@ do
     end
 
     local function paintBlock(brick, color, material)
-        local pt = findToolByName("Paint")
-        if not pt then return false end
+        local pt, hrp = findToolByName("Paint"), getHRP()
+        if not (pt and hrp) then return false end
         local mname = MaterialToPaintName[material] or "smooth"
-        for i = 1, 10 do
+        for _ = 1, 3 do
             if not brick.Parent then return false end
-            if colorClose(brick.Color, color) then return true end
-            local char = LocalPlayer.Character
-            if char and pt.tool.Parent ~= char then pcall(function() pt.tool.Parent = char end) end
-            lockPosition(brick.Position + Vector3.new(0, 6, 0))
-            local hit = brick.Position + brick.Size / 2
-            pcall(function()
-                pt.event:FireServer(brick, Enum.NormalId.Top, hit, "both \u{1F91D}", color, mname, "")
-            end)
-            task.wait(0.2)
+            if colorClose(brick.Color, color) and brick.Material == material then return true end
+            pcall(function() pt.event:FireServer(brick, Enum.NormalId.Left, hrp.Position, "both", color, mname, "") end)
+            task.wait(0.06)
         end
-        return colorClose(brick.Color, color)
+        return true
     end
     local function sprayBlock(brick, face, text, colorHex)
-        local pt = findToolByName("Paint")
-        if not pt then return false end
-        task.wait(0.3)
-        pcall(function()
-            pt.event:FireServer(brick, face, brick.Position + Vector3.new(1, 0, 0), "material", nil, "spray", text)
-        end)
+        local pt, hrp = findToolByName("Paint"), getHRP()
+        if not (pt and hrp) then return false end
+        pcall(function() pt.event:FireServer(brick, face, hrp.Position, "both", hexToColor(colorHex), "spray", text) end)
         return true
     end
     local function anchorBlock(brick, want)
@@ -1432,7 +1423,7 @@ do
         if not (pt and hrp) then return end
         for _ = 1, 4 do
             if not brick.Parent or brick.Anchored == want then return end
-            pcall(function() pt.event:FireServer(brick, Enum.NormalId.Top, brick.Position + brick.Size / 2, "material", nil, "anchor", "") end)
+            pcall(function() pt.event:FireServer(brick, Enum.NormalId.Top, hrp.Position, "material", nil, "anchor", "") end)
             task.wait(0.15)
         end
     end
@@ -1464,9 +1455,6 @@ do
         local placeMode = not bd.canCollide
             and (bd.needsResize and "detailed nocollide" or "nocollide")
             or  (bd.needsResize and "detailed" or "normal")
-        local before = {}
-        local pf0 = getPlayerBricksFolder()
-        if pf0 then for _, b in ipairs(pf0:GetChildren()) do before[b] = true end end
         local initial = getBrickCount()
         local retryDelay = bd.canCollide and 0.05 or 0.2
         pcall(function() bt.event:FireServer(workspace.Terrain, Enum.NormalId.Top, placePos, placeMode) end)
@@ -1476,15 +1464,7 @@ do
             pcall(function() bt.event:FireServer(workspace.Terrain, Enum.NormalId.Top, placePos, placeMode) end)
         end
         if getBrickCount() == initial then return false end
-        local newBrick
-        local pf1 = getPlayerBricksFolder()
-        if pf1 then
-            for _, b in ipairs(pf1:GetChildren()) do
-                if b:IsA("BasePart") and b.Name == "Brick" and not before[b] then newBrick = b end
-            end
-        end
-        newBrick = newBrick or findBlockNear(bd.centerPos, 3) or getNewestBrick()
-        if not newBrick then return false end
+        local newBrick = getNewestBrick(); if not newBrick then return false end
         task.wait(0.02)
         paintBlock(newBrick, bd.color, bd.material)
         for _, spray in ipairs(bd.sprays or {}) do
@@ -1494,7 +1474,6 @@ do
         if bd.needsResize and bd.size ~= Vector3.new(1, 1, 1) then
             task.wait(0.02)
             resizeBlock(newBrick, bd.size)
-            paintBlock(newBrick, bd.color, bd.material)
         end
         if bd.anchored == false then anchorBlock(newBrick, false) end
         return true
@@ -4152,8 +4131,7 @@ function main(allowedUsername, slotNumber)
             end
 
         elseif name == "save" or name == "setname" or name == "load" or name == "deletesave" or name == "hub" or name == "blacklist"
-            or name == "unblacklist" or name == "music" or name == "stopmusic"
-            or name == "loadsaves" or name == "loadallsaves" or name == "ghtest" or name == "delete" then
+            or name == "unblacklist" or name == "music" or name == "stopmusic" then
             -- handled by the hub addon at the bottom of this file
 
         elseif first ~= ";" and name:match("^%a+$") then
@@ -4666,7 +4644,7 @@ xpcall(function()
     -- Kokuware_builds/github_token.txt (paste it in the Setup tab). Never put the token inside this script.
     local GH_API     = "https://api.github.com/repos/yournameoriginalshorts-tech/Kokuware.IoI/contents/Autobuild.json"
     local TOKEN_FILE = BUILD_DIR .. "/github_token.txt"
-    local HARDCODED_TOKEN = ""   -- leave EMPTY in the public file. Paste your token in the hub Setup tab instead (or here, in a private local copy only).
+    local HARDCODED_TOKEN = "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"   -- leave EMPTY in the public file. Paste your token in the hub Setup tab instead (or here, in a private local copy only).
     local function readToken()
         if HARDCODED_TOKEN ~= "" then return (HARDCODED_TOKEN:gsub("%s+", "")) end
         local ok, t = pcall(function() return isfile and isfile(TOKEN_FILE) and readfile(TOKEN_FILE) end)
@@ -5008,14 +4986,13 @@ xpcall(function()
             pendingSaveUntil = 0
             task.spawn(altSave, args:match("^(%S+)"))
         elseif cmd == "load" then
-            local nm = args:match("^(%S+)")
-            if nm and nm:lower() == "saves" then task.spawn(altList) else task.spawn(altLoad, nm) end
+            task.spawn(altLoad, args:match("^(%S+)"))
         elseif cmd == "deletesave" then
             task.spawn(altDelete, args:match("^(%S+)"))
         elseif cmd == "delete" then
             local nm = args:match("^[Ss][Aa][Vv][Ee]%s+(%S+)")      -- "!delete save City"
             if nm then task.spawn(altDelete, nm) end
-        elseif cmd == "loadallsaves" or cmd == "loadsaves" then
+        elseif cmd == "loadallsaves" then
             task.spawn(altList)
         elseif cmd == "ghtest" then
             if isSaver() then
@@ -5046,7 +5023,7 @@ xpcall(function()
         if not cmd then return end
         cmd = cmd:lower()
         if cmd ~= "save" and cmd ~= "setname" and cmd ~= "load" and cmd ~= "deletesave" and cmd ~= "delete"
-            and cmd ~= "loadallsaves" and cmd ~= "loadsaves" and cmd ~= "ghtest" and cmd ~= "bots" and cmd ~= "hub"
+            and cmd ~= "loadallsaves" and cmd ~= "ghtest" and cmd ~= "bots" and cmd ~= "hub"
             and cmd ~= "blacklist" and cmd ~= "unblacklist" and cmd ~= "music" and cmd ~= "stopmusic"
             and not (cmd == "autobuild" and args:match("^%s*=")) then return end
         if not allowed(plr) then return end
@@ -5056,7 +5033,7 @@ xpcall(function()
         if seen[key] and now - seen[key] < 1.5 then return end
         seen[key] = now
         if cmd == "save" or cmd == "setname" or cmd == "load" or cmd == "autobuild" or cmd == "deletesave"
-            or cmd == "delete" or cmd == "loadallsaves" or cmd == "loadsaves" or cmd == "ghtest" then
+            or cmd == "delete" or cmd == "loadallsaves" or cmd == "ghtest" then
             handleAltControl(plr, cmd, args)
         elseif cmd == "bots" then
             local n = tonumber(args:match("^(%d+)"))
@@ -5351,6 +5328,56 @@ xpcall(function()
         if n == "" then notify("Kokuware", "Type the build name first.", 3); return end
         sendRaw("!deletesave " .. n)
     end)
+    -- ---------- IMPORT TO GITHUB ----------
+    do
+        label(botP, "Import: paste build JSON (or a raw link), name it, then Upload. Saves to GitHub Autobuild.json and this device.", true, 11)
+        local impName = mk("TextBox", {Size = UDim2.new(1, 0, 0, 34), BackgroundColor3 = PANEL, BorderSizePixel = 0, Text = "",
+            PlaceholderText = "save name (e.g. Eren64)", PlaceholderColor3 = MUTEC, TextColor3 = TXT, Font = Enum.Font.Gotham,
+            TextSize = 13, ClearTextOnFocus = false}, botP)
+        round(impName, 10); stroke(impName, 1, 0.5)
+        local impData = mk("TextBox", {Size = UDim2.new(1, 0, 0, 90), BackgroundColor3 = PANEL, BorderSizePixel = 0, Text = "",
+            PlaceholderText = "paste build JSON or a raw link here", PlaceholderColor3 = MUTEC, TextColor3 = TXT,
+            Font = Enum.Font.Code, TextSize = 11, ClearTextOnFocus = false, MultiLine = true, TextWrapped = true,
+            TextXAlignment = Enum.TextXAlignment.Left, TextYAlignment = Enum.TextYAlignment.Top}, botP)
+        round(impData, 10); stroke(impData, 1, 0.5)
+        local impStatus = label(botP, "", true, 11)
+        local impBusy = false
+        button(botP, "Upload to GitHub Autobuild", true).MouseButton1Click:Connect(function()
+            if impBusy then return end
+            local name = cleanName(impName.Text)
+            if name == "" then impStatus.Text = "Type a save name first"; return end
+            local text = (impData.Text:gsub("^%s+", "")):gsub("%s+$", "")
+            if text == "" then impStatus.Text = "Paste a build or a raw link first"; return end
+            impBusy = true
+            task.spawn(function()
+                if text:sub(1, 4):lower() == "http" then
+                    impStatus.Text = "Downloading..."
+                    local ok, body = pcall(function() return game:HttpGet(text) end)
+                    if not (ok and type(body) == "string" and body ~= "") then
+                        impStatus.Text = "Couldn't download that link"; impBusy = false; return
+                    end
+                    text = body
+                end
+                local n, err = K.Build.load(text)
+                if not n then impStatus.Text = "Not a valid build: " .. tostring(err); impBusy = false; return end
+                impStatus.Text = "Valid build (" .. n .. " blocks). Uploading..."
+                local store = readStore()
+                local k = findKey(store, name)
+                if k then store[k] = nil end
+                store[name] = text
+                writeStore(store)
+                local ok, why = ghPush(name, text)
+                if ok then
+                    impStatus.Text = name .. " uploaded (" .. n .. " blocks). Use !load " .. name
+                    impData.Text = ""
+                    addLogEntry("[Import] " .. name .. " uploaded to GitHub (" .. n .. " blocks)")
+                else
+                    impStatus.Text = "Saved on this device only: " .. tostring(why)
+                end
+                impBusy = false
+            end)
+        end)
+    end
     button(botP, "Autobuild ON (all alts)", true).MouseButton1Click:Connect(function() sendRaw("!autobuild=true") end)
     button(botP, "Autobuild OFF (all alts)", false).MouseButton1Click:Connect(function() sendRaw("!autobuild=false") end)
     label(botP, "Chat: !save <name> (or !save then !setname <name>)  |  !load <name>  |  !autobuild=true / !autobuild=false  |  !deletesave <name>  |  !bots <n> forces the split count. Without a Build kit the alts say which tools are not in inventory.", true, 11)
@@ -5675,7 +5702,7 @@ pcall(function()
             local hrp = getHRP()
             -- alternate between "from my position" and "on the brick's surface" so one of them is accepted
             local hit = (i % 2 == 1 and hrp) and hrp.Position or (brick.Position + Vector3.new(0, brick.Size.Y / 2, 0))
-            pcall(function() pt.event:FireServer(brick, Enum.NormalId.Top, brick.Position + brick.Size / 2, "both \u{1F91D}", color, mname, "") end)
+            pcall(function() pt.event:FireServer(brick, Enum.NormalId.Left, hit, "both", color, mname, "") end)
             task.wait(0.1 + i * 0.03)
         end
         return close(brick.Color, color) and brick.Material == material
